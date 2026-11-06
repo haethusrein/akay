@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'create_account_screens.dart';
 
 // ============================================================
 // AKAY - Home screen (front end only, no backend yet)
@@ -49,7 +50,7 @@ class AkayApp extends StatelessWidget {
         colorSchemeSeed: kGreen,
         scaffoldBackgroundColor: kBackground,
       ),
-      home: const HomeScreen(),
+      home: const WelcomeScreen(), // was HomeScreen(); the create account flow ends at HomeScreen
     );
   }
 }

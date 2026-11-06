@@ -1,9 +1,5 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
+// Basic smoke tests for the create account flow (front end only).
+// Run them with:  flutter test
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,20 +7,66 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:test_app/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  // Use a tall phone-sized screen so every button is visible in the test.
+  void useTallScreen(WidgetTester tester) {
+    tester.view.physicalSize = const Size(1080, 3000);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+  }
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  testWidgets('Welcome screen shows the two account buttons', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(const AkayApp());
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
+    expect(find.text('Create an account'), findsOneWidget);
+    expect(find.text('I already have an account'), findsOneWidget);
+    expect(find.text('Call emergency hotline'), findsOneWidget);
+  });
+
+  testWidgets('Empty form shows validation errors', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(const AkayApp());
+
+    await tester.tap(find.text('Create an account'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue'));
     await tester.pump();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('Enter your password'), findsOneWidget);
+    expect(find.textContaining('Enter a valid mobile number'), findsOneWidget);
+  });
+
+  testWidgets('Resident goes to the household profile', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(const AkayApp());
+
+    await tester.tap(find.text('Create an account'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).at(0), '09123456789');
+    await tester.enterText(find.byType(TextFormField).at(1), 'secret1');
+    await tester.tap(find.text('Continue'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Create your household profile'), findsOneWidget);
+  });
+
+  testWidgets('Respondent skips the household profile', (tester) async {
+    useTallScreen(tester);
+    await tester.pumpWidget(const AkayApp());
+
+    await tester.tap(find.text('Create an account'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Respondent'));
+    await tester.pump();
+    await tester.enterText(find.byType(TextFormField).at(0), '+63 912 345 6789');
+    await tester.enterText(find.byType(TextFormField).at(1), 'secret1');
+    await tester.tap(find.text('Continue'));
+    await tester.pump();
+    // pump() with a duration instead of pumpAndSettle(), because the code
+    // field keeps blinking its cursor and would never "settle".
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(find.text('Enter the one-time code'), findsOneWidget);
   });
 }
