@@ -1,5 +1,5 @@
 import 'dart:math' show min;
-
+import 'akay_backend.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -158,15 +158,22 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     return null;
   }
 
-  void _continue() {
-    // Stop here if any field shows an error.
+    Future<void> _continue() async {
     if (!_formKey.currentState!.validate()) return;
-
-    // TODO: later, create the account in Firebase here.
-    final Widget next = _role == UserRole.resident
-        ? const HouseholdSetupScreen()
-        : const VerifyCodeScreen();
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => next));
+    try {
+      await AkayBackend.signUp(
+        mobile: _mobileController.text,
+        password: _passwordController.text,
+        role: _role,
+      );
+      if (!mounted) return;
+      final Widget next = _role == UserRole.resident
+          ? const HouseholdSetupScreen()
+          : const VerifyCodeScreen();
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => next));
+    } catch (e) {
+      if (mounted) showComingSoon(context, AkayBackend.friendlyError(e));
+    }
   }
 
   @override

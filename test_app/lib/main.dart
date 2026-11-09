@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'create_account_screens.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 
 // ============================================================
 // AKAY - Home screen (front end only, no backend yet)
@@ -12,10 +14,11 @@ import 'create_account_screens.dart';
 //      reusable building blocks, so we don't repeat the same code.
 // ============================================================
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const AkayApp());
 }
-
 // ---------- Colors (change them here and the whole app updates) ----------
 const kGreen = Color(0xFF0F5C4D);
 const kLightGreen = Color(0xFFE6F2EC);
