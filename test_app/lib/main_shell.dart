@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'main.dart';
 import 'requests_screen.dart';
 import 'community_screen.dart';
+import 'profile_screen.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -18,7 +19,7 @@ class _MainShellState extends State<MainShell> {
     const HomeScreen(),
     const CommunityScreen(),
     const RequestsScreen(),
-    const _PlaceholderScreen(title: 'Profile', icon: Icons.person_outline),
+    const ProfileScreen(),
   ];
 
   @override
