@@ -1,18 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+
 import 'create_account_screens.dart';
 import 'akay_backend.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
+import 'notifications_screen.dart';
+import 'main_shell.dart';
 
 // ============================================================
-// AKAY - Home screen (front end only, no backend yet)
-//
-// How to read this file:
-//   1. main() starts the app.
-//   2. AkayApp sets the theme and says "the first screen is HomeScreen".
-//   3. HomeScreen stacks the page sections from top to bottom.
-//   4. The small widgets at the bottom (AppCard, IconBox, ...) are
-//      reusable building blocks, so we don't repeat the same code.
+// AKAY - Home screen
 // ============================================================
 
 void main() async {
@@ -20,7 +17,9 @@ void main() async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const AkayApp());
 }
-// ---------- Colors (change them here and the whole app updates) ----------
+
+// ---------- Colors ----------
+
 const kGreen = Color(0xFF0F5C4D);
 const kLightGreen = Color(0xFFE6F2EC);
 const kBackground = Color(0xFFF3F6F4);
@@ -30,17 +29,20 @@ const kTextGrey = Color(0xFF6B7A75);
 const kBorder = Color(0xFFE3E9E6);
 
 // ---------- Text styles ----------
+
 const kSmallLabel = TextStyle(
   fontSize: 12,
   letterSpacing: 1.2,
   fontWeight: FontWeight.w700,
   color: kGreen,
 );
+
 const kGreyText = TextStyle(fontSize: 13, color: kTextGrey);
 
 // ============================================================
 // The app
 // ============================================================
+
 class AkayApp extends StatelessWidget {
   const AkayApp({super.key});
 
@@ -54,29 +56,43 @@ class AkayApp extends StatelessWidget {
         colorSchemeSeed: kGreen,
         scaffoldBackgroundColor: kBackground,
       ),
-      home: const WelcomeScreen(), // was HomeScreen(); the create account flow ends at HomeScreen
+      home: StreamBuilder<User?>(
+        stream: FirebaseAuth.instance.authStateChanges(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator(color: kGreen)),
+            );
+          }
+
+          if (snapshot.hasData) {
+            return const MainShell();
+          }
+
+          return const WelcomeScreen();
+        },
+      ),
     );
   }
 }
 
 // ============================================================
-// The home screen
+// Home screen
 // ============================================================
+
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // SafeArea keeps content away from the phone's status bar.
-      // SingleChildScrollView lets the page scroll when it is long.
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              buildHeader(),
+              buildHeader(context),
               const SizedBox(height: 16),
               buildConnectedBanner(),
               const SizedBox(height: 16),
@@ -94,37 +110,12 @@ class HomeScreen extends StatelessWidget {
           ),
         ),
       ),
-
-      // Bottom navigation bar (not clickable yet - selectedIndex is fixed at 0)
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: 0,
-        backgroundColor: Colors.white,
-        indicatorColor: kLightGreen,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home, color: kGreen),
-            label: 'Home',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.map_outlined),
-            label: 'Community',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.history),
-            label: 'Requests',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            label: 'Profile',
-          ),
-        ],
-      ),
     );
   }
 
-  // ---------- Top bar: logo, name, bell, menu ----------
-  Widget buildHeader() {
+  // ---------- Header ----------
+
+  Widget buildHeader(BuildContext context) {
     return Row(
       children: [
         const IconBox(
@@ -143,15 +134,60 @@ class HomeScreen extends StatelessWidget {
             color: kTextDark,
           ),
         ),
-        const Spacer(), // pushes everything after it to the right
-        const IconBox(icon: Icons.notifications_none, size: 40),
+        const Spacer(),
+        GestureDetector(
+          onTap: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+            );
+          },
+          child: StreamBuilder<int>(
+            stream: AkayBackend.unreadCount(),
+            builder: (context, snapshot) {
+              final count = snapshot.data ?? 0;
+
+              return Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const IconBox(icon: Icons.notifications_none, size: 40),
+                  if (count > 0)
+                    Positioned(
+                      right: -3,
+                      top: -3,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                          color: kRed,
+                          shape: BoxShape.circle,
+                        ),
+                        constraints: const BoxConstraints(
+                          minWidth: 18,
+                          minHeight: 18,
+                        ),
+                        child: Text(
+                          count > 9 ? '9+' : '$count',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ),
         const SizedBox(width: 8),
         const IconBox(icon: Icons.menu, size: 40),
       ],
     );
   }
 
-  // ---------- Green "Connected" strip ----------
+  // ---------- Connected banner ----------
+
   Widget buildConnectedBanner() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -175,7 +211,8 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // ---------- Big "Do you need help?" card ----------
+  // ---------- Emergency assistance ----------
+
   Widget buildEmergencyCard(BuildContext context) {
     return Container(
       width: double.infinity,
@@ -208,8 +245,7 @@ class HomeScreen extends StatelessWidget {
             width: double.infinity,
             height: 56,
             child: ElevatedButton.icon(
-                            onPressed: () async {
-                // "What's happening?" picker
+              onPressed: () async {
                 final type = await showModalBottomSheet<String>(
                   context: context,
                   builder: (ctx) => SafeArea(
@@ -220,7 +256,10 @@ class HomeScreen extends StatelessWidget {
                           padding: EdgeInsets.all(16),
                           child: Text(
                             "What's happening?",
-                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                         ListTile(
@@ -248,11 +287,17 @@ class HomeScreen extends StatelessWidget {
                     ),
                   ),
                 );
+
                 if (type == null) return;
+
                 try {
                   await AkayBackend.sendRequest(type: type);
+
                   if (context.mounted) {
-                    showComingSoon(context, 'Help request sent. Finding a verified responder...');
+                    showComingSoon(
+                      context,
+                      'Help request sent. Finding a verified responder...',
+                    );
                   }
                 } catch (e) {
                   if (context.mounted) {
@@ -286,264 +331,225 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  // ---------- "Your household" section ----------
+  // ---------- Household section ----------
+
   Widget buildHouseholdSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SectionHeader(
-          label: 'HOUSEHOLD READINESS',
-          title: 'Your household',
-          actionText: 'Manage details',
-        ),
-        const SizedBox(height: 12),
-        AppCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Name + address + Verified badge
-              Row(
-                children: [
-                  const IconBox(
-                    icon: Icons.home_outlined,
-                    bg: kLightGreen,
-                    size: 46,
-                  ),
-                  const SizedBox(width: 12),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Santos Household',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w500,
-                            color: kTextDark,
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Icon(
-                              Icons.location_on_outlined,
-                              size: 14,
-                              color: kTextGrey,
-                            ),
-                            SizedBox(width: 4),
-                            Text('Purok 4, Barangay Lumbo', style: kGreyText),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: kLightGreen,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.check, size: 14, color: kGreen),
-                        SizedBox(width: 4),
-                        Text(
-                          'Verified',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: kGreen,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const Divider(height: 32, color: kBorder),
+    return StreamBuilder(
+      stream: AkayBackend.myHousehold(),
+      builder: (context, householdSnapshot) {
+        if (householdSnapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
 
-              // Three info rows
-              const InfoRow(
-                icon: Icons.people_outline,
-                bg: Color(0xFFE8F1FB),
-                color: Color(0xFF3B82C4),
-                value: '4',
-                label: 'members',
-              ),
-              const InfoRow(
-                icon: Icons.accessible,
-                bg: Color(0xFFFFF3DC),
-                color: Color(0xFFE0A030),
-                value: '1',
-                label: 'mobility need',
-              ),
-              const InfoRow(
-                icon: Icons.shield_outlined,
-                bg: kLightGreen,
-                color: kGreen,
-                value: 'Ready',
-                label: 'emergency profile',
-              ),
-              const Divider(height: 32, color: kBorder),
+        final household = householdSnapshot.data?.data();
 
-              // Notes for responders
-              const Text(
-                'Important responder notes',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: kTextGrey,
-                ),
-              ),
-              const SizedBox(height: 10),
-              const Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  NoteChip(text: 'Wheelchair required'),
-                  NoteChip(text: 'Ground-floor access'),
-                  NoteChip(text: '2 senior residents'),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ---------- "Community updates" section ----------
-  Widget buildUpdatesSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SectionHeader(
-          label: 'LATEST ACTIVITY',
-          title: 'Community updates',
-          actionText: 'View all',
-        ),
-        const SizedBox(height: 12),
-        const AppCard(
-          child: Column(
-            children: [
-              UpdateRow(
-                icon: Icons.warning_amber_rounded,
-                bg: Color(0xFFFFF3DC),
-                color: Color(0xFFE0A030),
-                title: 'Flood advisory raised to Level 2',
-                body:
-                    'Water levels are rising near Pulangi River. Prepare essential items.',
-              ),
-              Divider(height: 28, color: kBorder),
-              UpdateRow(
-                icon: Icons.alt_route,
-                bg: Color(0xFFE8F1FB),
-                color: Color(0xFF3B82C4),
-                title: 'Evacuation route is clear',
-                body: 'Lumbo Elementary School route is open for residents.',
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ---------- "Community status" map card ----------
-  Widget buildCommunityStatus() {
-    return AppCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('AROUND YOU', style: kSmallLabel),
-                    SizedBox(height: 6),
-                    Text(
-                      'Community status',
-                      style: TextStyle(fontSize: 22, color: kTextDark),
-                    ),
-                  ],
-                ),
-              ),
-              IconBox(icon: Icons.map_outlined, bg: kLightGreen, size: 40),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // A fake map: a colored box with labels and pins placed on it.
-          // Alignment(x, y): (-1,-1) is top-left, (0,0) is center, (1,1) is bottom-right.
-          Container(
-            height: 240,
-            width: double.infinity,
-            decoration: BoxDecoration(
-              color: const Color(0xFFE9EFEB),
-              borderRadius: BorderRadius.circular(16),
+        if (household == null) {
+          return const AppCard(
+            child: Text(
+              'No household profile found. Please complete your household setup.',
             ),
-            child: const Stack(
+          );
+        }
+
+        return StreamBuilder(
+          stream: AkayBackend.myProfile(),
+          builder: (context, profileSnapshot) {
+            final verified = profileSnapshot.data?.data()?['verified'] == true;
+
+            final members = household['members'] ?? 0;
+            final mobilityNeed = household['mobilityNeed'] ?? 'None';
+
+            final notes = List<String>.from(household['notes'] ?? []);
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Align(
-                  alignment: Alignment(-0.4, -0.7),
-                  child: Text('Purok 3', style: kGreyText),
+                const SectionHeader(
+                  label: 'HOUSEHOLD READINESS',
+                  title: 'Your household',
+                  actionText: 'Manage details',
                 ),
-                Align(
-                  alignment: Alignment(0.7, 0.3),
-                  child: Text('Purok 4', style: kGreyText),
-                ),
-                Align(
-                  alignment: Alignment(0.7, -0.75),
-                  child: Icon(Icons.location_on, color: Color(0xFF4DA37F)),
-                ),
-                Align(
-                  alignment: Alignment(0.55, 0.5),
-                  child: Icon(Icons.location_on, color: Color(0xFF4DA37F)),
-                ),
-                Align(
-                  alignment: Alignment(-0.6, 0.45),
-                  child: Icon(Icons.location_on, color: kRed),
-                ),
-                Align(
-                  alignment: Alignment(-0.2, 0.8),
-                  child: Text(
-                    'Evacuation center',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: kTextDark,
-                    ),
+                const SizedBox(height: 12),
+                AppCard(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const IconBox(
+                            icon: Icons.home_outlined,
+                            bg: kLightGreen,
+                            size: 46,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  household['name'] ?? 'My Household',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w500,
+                                    color: kTextDark,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.location_on_outlined,
+                                      size: 14,
+                                      color: kTextGrey,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Expanded(
+                                      child: Text(
+                                        household['address'] ??
+                                            household['barangay'] ??
+                                            '',
+                                        style: kGreyText,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: verified
+                                  ? kLightGreen
+                                  : const Color(0xFFFFF3DC),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              verified ? 'Verified' : 'Unverified',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: verified
+                                    ? kGreen
+                                    : const Color(0xFFE0A030),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const Divider(height: 32, color: kBorder),
+                      InfoRow(
+                        icon: Icons.people_outline,
+                        bg: const Color(0xFFE8F1FB),
+                        color: const Color(0xFF3B82C4),
+                        value: '$members',
+                        label: 'members',
+                      ),
+                      InfoRow(
+                        icon: Icons.accessible,
+                        bg: const Color(0xFFFFF3DC),
+                        color: const Color(0xFFE0A030),
+                        value: '$mobilityNeed',
+                        label: 'mobility need',
+                      ),
+                      const Divider(height: 32, color: kBorder),
+                      const Text(
+                        'Important responder notes',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: kTextGrey,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: notes.isEmpty
+                            ? [const NoteChip(text: 'No additional notes')]
+                            : notes
+                                  .map((note) => NoteChip(text: note))
+                                  .toList(),
+                      ),
+                    ],
                   ),
-                ),
-                Align(
-                  alignment: Alignment(-0.05, -0.05),
-                  child: Icon(Icons.home, size: 34, color: kGreen),
                 ),
               ],
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Three numbers under the map
-          const Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              StatItem(value: '12', label: 'Responders online'),
-              StatItem(value: '3', label: 'Active requests'),
-              StatItem(value: '1.2 km', label: 'Nearest center'),
-            ],
-          ),
-        ],
-      ),
+            );
+          },
+        );
+      },
     );
   }
 
-  // ---------- Hotline card ----------
+  // ---------- Community updates ----------
+
+  Widget buildUpdatesSection() {
+    return StreamBuilder(
+      stream: AkayBackend.communityUpdates(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (snapshot.hasError) {
+          return AppCard(
+            child: Text(AkayBackend.friendlyError(snapshot.error!)),
+          );
+        }
+
+        final updates = snapshot.data?.docs ?? [];
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SectionHeader(
+              label: 'LATEST ACTIVITY',
+              title: 'Community updates',
+              actionText: 'View all',
+            ),
+            const SizedBox(height: 12),
+            AppCard(
+              child: updates.isEmpty
+                  ? const Text(
+                      'No community updates available yet.',
+                      style: kGreyText,
+                    )
+                  : Column(
+                      children: [
+                        for (int i = 0; i < updates.length; i++) ...[
+                          UpdateRow(
+                            icon: Icons.campaign_outlined,
+                            bg: kLightGreen,
+                            color: kGreen,
+                            title:
+                                updates[i].data()['title']?.toString() ??
+                                'Community update',
+                            body: updates[i].data()['body']?.toString() ?? '',
+                          ),
+                          if (i != updates.length - 1)
+                            const Divider(height: 28, color: kBorder),
+                        ],
+                      ],
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // ---------- Live community status ----------
+
+  Widget buildCommunityStatus() {
+    return const CommunityStatusCard();
+  }
+
+  // ---------- Hotline ----------
+
   Widget buildHotlineCard() {
     return AppCard(
       child: Column(
@@ -584,7 +590,7 @@ class HomeScreen extends StatelessWidget {
             height: 46,
             child: ElevatedButton(
               onPressed: () {
-                // TODO: later, open the phone dialer
+                // TODO: Open phone dialer.
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFFDE9E5),
@@ -607,12 +613,229 @@ class HomeScreen extends StatelessWidget {
 }
 
 // ============================================================
-// Small reusable building blocks
+// LIVE COMMUNITY STATUS CARD
 // ============================================================
 
-// A white rounded box with a thin border. Every section card uses it.
+class CommunityStatusCard extends StatefulWidget {
+  const CommunityStatusCard({super.key});
+
+  @override
+  State<CommunityStatusCard> createState() => _CommunityStatusCardState();
+}
+
+class _CommunityStatusCardState extends State<CommunityStatusCard> {
+  late Future<Map<String, dynamic>> _statusFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _statusFuture = _loadStatus();
+  }
+
+  Future<Map<String, dynamic>> _loadStatus() async {
+    final position = await AkayBackend.currentPosition();
+
+    return AkayBackend.communityStatus(position.latitude, position.longitude);
+  }
+
+  void _retry() {
+    setState(() {
+      _statusFuture = _loadStatus();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppCard(
+      child: FutureBuilder<Map<String, dynamic>>(
+        future: _statusFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('AROUND YOU', style: kSmallLabel),
+                          SizedBox(height: 6),
+                          Text(
+                            'Community status',
+                            style: TextStyle(fontSize: 22, color: kTextDark),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconBox(
+                      icon: Icons.map_outlined,
+                      bg: kLightGreen,
+                      size: 40,
+                    ),
+                  ],
+                ),
+                SizedBox(height: 24),
+                CircularProgressIndicator(),
+                SizedBox(height: 12),
+                Text('Loading nearby community data...', style: kGreyText),
+              ],
+            );
+          }
+
+          if (snapshot.hasError) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('AROUND YOU', style: kSmallLabel),
+                const SizedBox(height: 6),
+                const Text(
+                  'Community status',
+                  style: TextStyle(fontSize: 22, color: kTextDark),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  AkayBackend.friendlyError(snapshot.error!),
+                  style: kGreyText,
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: _retry,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Try again'),
+                  ),
+                ),
+              ],
+            );
+          }
+
+          final data = snapshot.data!;
+
+          final responders = data['respondersOnline'] ?? 0;
+          final requests = data['activeRequests'] ?? 0;
+
+          final nearest = data['nearestCenter'] as Map<String, dynamic>?;
+
+          final centerName = nearest?['name']?.toString() ?? 'No center found';
+
+          final distance = nearest?['distanceKm'];
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('AROUND YOU', style: kSmallLabel),
+                        SizedBox(height: 6),
+                        Text(
+                          'Community status',
+                          style: TextStyle(fontSize: 22, color: kTextDark),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconBox(icon: Icons.map_outlined, bg: kLightGreen, size: 40),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: _statusItem(
+                      Icons.groups,
+                      responders.toString(),
+                      'Responders online',
+                    ),
+                  ),
+                  Expanded(
+                    child: _statusItem(
+                      Icons.warning_amber_rounded,
+                      requests.toString(),
+                      'Active requests',
+                    ),
+                  ),
+                ],
+              ),
+              const Divider(height: 32, color: kBorder),
+              Row(
+                children: [
+                  const Icon(Icons.location_on_outlined, color: kRed, size: 28),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Nearest evacuation center',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: kTextDark,
+                          ),
+                        ),
+                        Text(centerName, style: kGreyText),
+                      ],
+                    ),
+                  ),
+                  Text(
+                    distance is num
+                        ? '${distance.toStringAsFixed(1)} km'
+                        : '--',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                      color: kGreen,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _retry,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Refresh'),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _statusItem(IconData icon, String value, String label) {
+    return Column(
+      children: [
+        Icon(icon, size: 28, color: kGreen),
+        const SizedBox(height: 6),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
+            color: kTextDark,
+          ),
+        ),
+        Text(label, textAlign: TextAlign.center, style: kGreyText),
+      ],
+    );
+  }
+}
+
+// ============================================================
+// Reusable building blocks
+// ============================================================
+
 class AppCard extends StatelessWidget {
   final Widget child;
+
   const AppCard({super.key, required this.child});
 
   @override
@@ -630,7 +853,6 @@ class AppCard extends StatelessWidget {
   }
 }
 
-// A small rounded square with an icon inside.
 class IconBox extends StatelessWidget {
   final IconData icon;
   final Color bg;
@@ -660,7 +882,6 @@ class IconBox extends StatelessWidget {
   }
 }
 
-// Small green label, big title, and a "link" on the right.
 class SectionHeader extends StatelessWidget {
   final String label;
   final String title;
@@ -704,7 +925,6 @@ class SectionHeader extends StatelessWidget {
   }
 }
 
-// One row in the household card: colored icon, bold value, grey label.
 class InfoRow extends StatelessWidget {
   final IconData icon;
   final Color bg;
@@ -749,9 +969,9 @@ class InfoRow extends StatelessWidget {
   }
 }
 
-// The grey rounded tags ("Wheelchair required", ...).
 class NoteChip extends StatelessWidget {
   final String text;
+
   const NoteChip({super.key, required this.text});
 
   @override
@@ -775,7 +995,6 @@ class NoteChip extends StatelessWidget {
   }
 }
 
-// One item in "Community updates".
 class UpdateRow extends StatelessWidget {
   final IconData icon;
   final Color bg;
@@ -812,31 +1031,6 @@ class UpdateRow extends StatelessWidget {
             ],
           ),
         ),
-      ],
-    );
-  }
-}
-
-// A number with a small caption, used under the map.
-class StatItem extends StatelessWidget {
-  final String value;
-  final String label;
-  const StatItem({super.key, required this.value, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: kTextDark,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(label, style: const TextStyle(fontSize: 12, color: kTextGrey)),
       ],
     );
   }

@@ -36,23 +36,29 @@ class AkayBackend {
   // Firebase has no free phone+password login, so we sign in with a hidden email.
   static String _emailFor(String mobile) => '${_digits(mobile)}@akay.app';
 
-  static int _millis(dynamic ts) =>
-      (ts is Timestamp ? ts.millisecondsSinceEpoch : DateTime.now().millisecondsSinceEpoch);
+  static int _millis(dynamic ts) => (ts is Timestamp
+      ? ts.millisecondsSinceEpoch
+      : DateTime.now().millisecondsSinceEpoch);
 
   static double _round3(double n) => (n * 1000).round() / 1000; // ~110 m
 
   static CollectionReference<Map<String, dynamic>> _notifsOf(String userId) =>
       _db.collection('notifications').doc(userId).collection('items');
 
-  static Map<String, dynamic> _notif(String type, String title, {String? body, String? requestId}) => {
-        'type': type,
-        'title': title,
-        'body': body,
-        'requestId': requestId,
-        'isRead': false,
-        'fromUid': uid,
-        'createdAt': FieldValue.serverTimestamp(),
-      };
+  static Map<String, dynamic> _notif(
+    String type,
+    String title, {
+    String? body,
+    String? requestId,
+  }) => {
+    'type': type,
+    'title': title,
+    'body': body,
+    'requestId': requestId,
+    'isRead': false,
+    'fromUid': uid,
+    'createdAt': FieldValue.serverTimestamp(),
+  };
 
   /// Turns any error into a message you can show in a SnackBar.
   static String friendlyError(Object e) {
@@ -91,7 +97,9 @@ class AkayBackend {
     required UserRole role,
   }) async {
     final cred = await _auth.createUserWithEmailAndPassword(
-        email: _emailFor(mobile), password: password);
+      email: _emailFor(mobile),
+      password: password,
+    );
     await _db.doc('users/${cred.user!.uid}').set({
       'mobile': '+${_digits(mobile)}',
       'role': role.name, // 'resident' | 'respondent'
@@ -101,8 +109,13 @@ class AkayBackend {
   }
 
   /// "I already have an account"
-  static Future<void> signIn({required String mobile, required String password}) =>
-      _auth.signInWithEmailAndPassword(email: _emailFor(mobile), password: password);
+  static Future<void> signIn({
+    required String mobile,
+    required String password,
+  }) => _auth.signInWithEmailAndPassword(
+    email: _emailFor(mobile),
+    password: password,
+  );
 
   static Future<void> signOut() => _auth.signOut();
 
@@ -116,17 +129,16 @@ class AkayBackend {
     required int members,
     required String mobilityNeed,
     List<String> notes = const [],
-  }) =>
-      _db.doc('households/$uid').set({
-        'name': name,
-        'barangay': barangay,
-        'address': address,
-        'location': GeoPoint(lat, lng),
-        'members': members,
-        'mobilityNeed': mobilityNeed,
-        'notes': notes,
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+  }) => _db.doc('households/$uid').set({
+    'name': name,
+    'barangay': barangay,
+    'address': address,
+    'location': GeoPoint(lat, lng),
+    'members': members,
+    'mobilityNeed': mobilityNeed,
+    'notes': notes,
+    'updatedAt': FieldValue.serverTimestamp(),
+  }, SetOptions(merge: true));
 
   /// Verify Code screen -> Verify.
   /// You create the codes by hand in Firestore: verificationCodes/123456 { role: 'resident', used: false }
@@ -139,7 +151,9 @@ class AkayBackend {
       throw 'Invalid or already used code.';
     }
     final me = await userRef.get();
-    if (data['role'] != me.data()?['role']) throw 'This code is for a different account type.';
+    if (data['role'] != me.data()?['role']) {
+      throw 'This code is for a different account type.';
+    }
 
     final batch = _db.batch();
     batch.update(codeRef, {'used': true, 'usedBy': uid});
@@ -159,8 +173,11 @@ class AkayBackend {
       throw 'Turn on your phone location (GPS).';
     }
     var perm = await Geolocator.checkPermission();
-    if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();
-    if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
+    if (perm == LocationPermission.denied) {
+      perm = await Geolocator.requestPermission();
+    }
+    if (perm == LocationPermission.denied ||
+        perm == LocationPermission.deniedForever) {
       throw 'Location permission is needed so responders can find you.';
     }
     return Geolocator.getCurrentPosition(
@@ -172,7 +189,10 @@ class AkayBackend {
 
   /// "Request help now" -> returns the new request id.
   /// type: 'flood' | 'medical' | 'fire' | 'other'
-  static Future<String> sendRequest({required String type, String? description}) async {
+  static Future<String> sendRequest({
+    required String type,
+    String? description,
+  }) async {
     final me = uid!;
     final active = await _db
         .collection('requests')
@@ -217,8 +237,15 @@ class AkayBackend {
       'lng': _round3(pos.longitude),
       'createdAt': FieldValue.serverTimestamp(),
     });
-    batch.set(_notifsOf(me).doc(),
-        _notif('request_created', 'Request sent', body: 'Finding a verified responder near you.', requestId: ref.id));
+    batch.set(
+      _notifsOf(me).doc(),
+      _notif(
+        'request_created',
+        'Request sent',
+        body: 'Finding a verified responder near you.',
+        requestId: ref.id,
+      ),
+    );
     await batch.commit();
     return ref.id;
   }
@@ -229,12 +256,20 @@ class AkayBackend {
     final r = (await ref.get()).data();
     if (r == null) throw 'Request not found.';
     final batch = _db.batch();
-    batch.update(ref, {'status': 'cancelled', 'updatedAt': FieldValue.serverTimestamp()});
+    batch.update(ref, {
+      'status': 'cancelled',
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
     if (r['status'] == 'pending') batch.delete(_db.doc('publicMarkers/$id'));
-    batch.set(_notifsOf(uid!).doc(), _notif('request_cancelled', 'Request cancelled', requestId: id));
+    batch.set(
+      _notifsOf(uid!).doc(),
+      _notif('request_cancelled', 'Request cancelled', requestId: id),
+    );
     if (r['responderId'] != null) {
-      batch.set(_notifsOf(r['responderId']).doc(),
-          _notif('request_cancelled', 'Request was cancelled', requestId: id));
+      batch.set(
+        _notifsOf(r['responderId']).doc(),
+        _notif('request_cancelled', 'Request was cancelled', requestId: id),
+      );
     }
     await batch.commit();
   }
@@ -243,7 +278,9 @@ class AkayBackend {
   static Future<void> acceptRequest(String id) async {
     final ref = _db.doc('requests/$id');
     final r = (await ref.get()).data();
-    if (r == null || r['status'] != 'pending') throw 'Request already taken or unavailable.';
+    if (r == null || r['status'] != 'pending') {
+      throw 'Request already taken or unavailable.';
+    }
     final me = await _db.doc('users/$uid').get();
 
     final batch = _db.batch();
@@ -255,9 +292,15 @@ class AkayBackend {
       'updatedAt': FieldValue.serverTimestamp(),
     });
     batch.delete(_db.doc('publicMarkers/$id'));
-    batch.set(_notifsOf(r['userId']).doc(),
-        _notif('request_matched', 'A responder is on the way',
-            body: 'A verified responder accepted your request.', requestId: id));
+    batch.set(
+      _notifsOf(r['userId']).doc(),
+      _notif(
+        'request_matched',
+        'A responder is on the way',
+        body: 'A verified responder accepted your request.',
+        requestId: id,
+      ),
+    );
     await batch.commit();
   }
 
@@ -273,32 +316,49 @@ class AkayBackend {
       'resolvedAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
-    batch.set(_notifsOf(uid!).doc(), _notif('request_resolved', 'Request resolved', requestId: id));
+    batch.set(
+      _notifsOf(uid!).doc(),
+      _notif('request_resolved', 'Request resolved', requestId: id),
+    );
     if (other != null) {
-      batch.set(_notifsOf(other).doc(), _notif('request_resolved', 'Request resolved', requestId: id));
+      batch.set(
+        _notifsOf(other).doc(),
+        _notif('request_resolved', 'Request resolved', requestId: id),
+      );
     }
     await batch.commit();
   }
 
   /// Request status screen (live: pending -> matched -> resolved)
-  static Stream<DocumentSnapshot<Map<String, dynamic>>> watchRequest(String id) =>
-      _db.doc('requests/$id').snapshots();
+  static Stream<DocumentSnapshot<Map<String, dynamic>>> watchRequest(
+    String id,
+  ) => _db.doc('requests/$id').snapshots();
 
-  static List<Map<String, dynamic>> _sorted(QuerySnapshot<Map<String, dynamic>> s) {
+  static List<Map<String, dynamic>> _sorted(
+    QuerySnapshot<Map<String, dynamic>> s,
+  ) {
     final list = s.docs.map((d) => {'id': d.id, ...d.data()}).toList();
-    list.sort((a, b) => _millis(b['createdAt']).compareTo(_millis(a['createdAt'])));
+    list.sort(
+      (a, b) => _millis(b['createdAt']).compareTo(_millis(a['createdAt'])),
+    );
     return list;
   }
 
   /// Requests / history screen (newest first). Each item has an 'id' field.
-  static Stream<List<Map<String, dynamic>>> myRequests() =>
-      _db.collection('requests').where('userId', isEqualTo: uid).snapshots().map(_sorted);
+  static Stream<List<Map<String, dynamic>>> myRequests() => _db
+      .collection('requests')
+      .where('userId', isEqualTo: uid)
+      .snapshots()
+      .map(_sorted);
 
   // ---------- responder side ----------
 
   /// Responder: go online/offline (shares your position for the "Responders online" count).
   static Future<void> setOnline(bool online) async {
-    final data = <String, dynamic>{'online': online, 'updatedAt': FieldValue.serverTimestamp()};
+    final data = <String, dynamic>{
+      'online': online,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
     if (online) {
       final p = await currentPosition();
       data['lat'] = p.latitude;
@@ -308,12 +368,18 @@ class AkayBackend {
   }
 
   /// Responder: live list of requests waiting for help (newest first). Each item has an 'id'.
-  static Stream<List<Map<String, dynamic>>> pendingRequests() =>
-      _db.collection('requests').where('status', isEqualTo: 'pending').snapshots().map(_sorted);
+  static Stream<List<Map<String, dynamic>>> pendingRequests() => _db
+      .collection('requests')
+      .where('status', isEqualTo: 'pending')
+      .snapshots()
+      .map(_sorted);
 
   /// Responder: requests I accepted.
-  static Stream<List<Map<String, dynamic>>> myAcceptedRequests() =>
-      _db.collection('requests').where('responderId', isEqualTo: uid).snapshots().map(_sorted);
+  static Stream<List<Map<String, dynamic>>> myAcceptedRequests() => _db
+      .collection('requests')
+      .where('responderId', isEqualTo: uid)
+      .snapshots()
+      .map(_sorted);
 
   // ---------- home / community ----------
 
@@ -328,7 +394,10 @@ class AkayBackend {
       .snapshots();
 
   /// Home "Community status": { respondersOnline, activeRequests, nearestCenter: {name, distanceKm} | null }
-  static Future<Map<String, dynamic>> communityStatus(double lat, double lng) async {
+  static Future<Map<String, dynamic>> communityStatus(
+    double lat,
+    double lng,
+  ) async {
     double km(num a, num b) =>
         Geolocator.distanceBetween(lat, lng, a.toDouble(), b.toDouble()) / 1000;
 
@@ -338,10 +407,14 @@ class AkayBackend {
       _db.collection('evacuationCenters').get(),
     ]);
 
-    final cutoff = DateTime.now().subtract(const Duration(minutes: 30)).millisecondsSinceEpoch;
+    final cutoff = DateTime.now()
+        .subtract(const Duration(minutes: 30))
+        .millisecondsSinceEpoch;
     final online = results[0].docs.where((d) {
       final x = d.data();
-      return x['lat'] != null && km(x['lat'], x['lng']) <= nearbyKm && _millis(x['updatedAt']) >= cutoff;
+      return x['lat'] != null &&
+          km(x['lat'], x['lng']) <= nearbyKm &&
+          _millis(x['updatedAt']) >= cutoff;
     }).length;
     final active = results[1].docs.where((d) {
       final x = d.data();
@@ -354,10 +427,18 @@ class AkayBackend {
       if (loc == null) continue;
       final d = km(loc.latitude, loc.longitude);
       if (nearest == null || d < (nearest['distanceKm'] as double)) {
-        nearest = {'id': c.id, 'name': c.data()['name'], 'distanceKm': (d * 10).round() / 10};
+        nearest = {
+          'id': c.id,
+          'name': c.data()['name'],
+          'distanceKm': (d * 10).round() / 10,
+        };
       }
     }
-    return {'respondersOnline': online, 'activeRequests': active, 'nearestCenter': nearest};
+    return {
+      'respondersOnline': online,
+      'activeRequests': active,
+      'nearestCenter': nearest,
+    };
   }
 
   /// Map pins for the Community screen (each doc has lat, lng, type, status)
@@ -368,17 +449,28 @@ class AkayBackend {
 
   /// Notifications screen list
   static Stream<QuerySnapshot<Map<String, dynamic>>> notifications() =>
-      _notifsOf(uid!).orderBy('createdAt', descending: true).limit(50).snapshots();
+      _notifsOf(uid!)
+          .orderBy('createdAt', descending: true)
+          .limit(50)
+          .snapshots();
 
   /// Bell badge number
   static Stream<int> unreadCount() =>
-      _notifsOf(uid!).where('isRead', isEqualTo: false).snapshots().map((s) => s.size);
+      _notifsOf(uid!)
+          .where('isRead', isEqualTo: false)
+          .snapshots()
+          .map((s) => s.size);
 
-  static Future<void> markRead(String id) => _notifsOf(uid!).doc(id).update({'isRead': true});
-  static Future<void> deleteNotification(String id) => _notifsOf(uid!).doc(id).delete();
+  static Future<void> markRead(String id) =>
+      _notifsOf(uid!).doc(id).update({'isRead': true});
+  static Future<void> deleteNotification(String id) =>
+      _notifsOf(uid!).doc(id).delete();
 
   static Future<void> markAllRead() async {
-    final snap = await _notifsOf(uid!).where('isRead', isEqualTo: false).limit(400).get();
+    final snap = await _notifsOf(uid!)
+        .where('isRead', isEqualTo: false)
+        .limit(400)
+        .get();
     final batch = _db.batch();
     for (final d in snap.docs) {
       batch.update(d.reference, {'isRead': true});

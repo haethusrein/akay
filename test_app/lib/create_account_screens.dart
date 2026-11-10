@@ -1,23 +1,16 @@
+// ============================================================
+// AKAY - Create account flow
+// ============================================================
 import 'dart:math' show min;
+
 import 'akay_backend.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-// main.dart gives us the colors (kGreen, kBackground, ...) and HomeScreen.
+import 'sign_in_screen.dart';
 import 'main.dart';
-
-// ============================================================
-// AKAY - Create account flow (front end only, no backend yet)
-//
-// Screen order:
-//   1. WelcomeScreen          "Create an account" / "I already have an account"
-//   2. CreateAccountScreen    pick Resident or Respondent + mobile + password
-//   3. HouseholdSetupScreen   (Residents only) household profile, step 2 of 3
-//   4. VerifyCodeScreen       6-digit one-time code, then opens HomeScreen
-//
-// Everything here is fake data for now. Search for "TODO" to find the
-// places where the backend (Firebase) will be connected later.
-// ============================================================
+import 'main_shell.dart';
 
 // ---------- Extra colors used only by these screens ----------
 const kAmber = Color(0xFFF4C152);
@@ -27,11 +20,8 @@ const kFieldFill = Color(0xFFF8FAF9);
 const kFieldBorder = Color(0xFFE0E7E4);
 const kHintGrey = Color(0xFF9AA7A2);
 
-// The two kinds of accounts.
 enum UserRole { resident, respondent }
 
-// Shows a small message at the bottom of the screen. Used for buttons
-// whose screens or backend are not built yet.
 void showComingSoon(BuildContext context, String message) {
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
@@ -76,8 +66,9 @@ class WelcomeScreen extends StatelessWidget {
             height: 54,
             child: OutlinedButton(
               onPressed: () {
-                // TODO: open the sign in screen (not designed yet)
-                showComingSoon(context, 'Sign in screen is coming soon.');
+                Navigator.of(
+                  context,
+                ).push(MaterialPageRoute(builder: (_) => const SignInScreen()));
               },
               style: OutlinedButton.styleFrom(
                 foregroundColor: kGreen,
@@ -96,7 +87,6 @@ class WelcomeScreen extends StatelessWidget {
           Center(
             child: TextButton.icon(
               onPressed: () {
-                // TODO: open the phone dialer
                 showComingSoon(context, 'Calling the hotline comes later.');
               },
               icon: const Icon(Icons.phone_outlined, size: 18),
@@ -114,7 +104,7 @@ class WelcomeScreen extends StatelessWidget {
 }
 
 // ============================================================
-// Screen 2: Create account (choose role + mobile + password)
+// Screen 2: Create account
 // ============================================================
 class CreateAccountScreen extends StatefulWidget {
   const CreateAccountScreen({super.key});
@@ -138,7 +128,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     super.dispose();
   }
 
-  // Accepts 09123456789, +63 912 345 6789, or 9123456789.
   String? _validateMobile(String? value) {
     var digits = (value ?? '').replaceAll(RegExp(r'\D'), '');
     if (digits.startsWith('63')) {
@@ -158,7 +147,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     return null;
   }
 
-    Future<void> _continue() async {
+  Future<void> _continue() async {
     if (!_formKey.currentState!.validate()) return;
     try {
       await AkayBackend.signUp(
@@ -252,7 +241,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
 }
 
 // ============================================================
-// Screen 3: Household profile (Residents only, step 2 of 3)
+// Screen 3: Household profile
 // ============================================================
 class HouseholdSetupScreen extends StatefulWidget {
   const HouseholdSetupScreen({super.key});
@@ -262,7 +251,6 @@ class HouseholdSetupScreen extends StatefulWidget {
 }
 
 class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
-  // TODO: replace this sample list with the real barangays of Valencia City.
   static const _barangays = [
     'Barangay Bagontaas',
     'Barangay Batangan',
@@ -286,13 +274,13 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
   final _nameController = TextEditingController();
   final _addressController = TextEditingController();
 
-  String? _barangay; // null until the user picks one
+  String? _barangay;
   int _members = 1;
   String _need = 'None';
   bool _pinned = false;
-    double? _lat;
-    double? _lng;
-  bool _submitted = false; // true after the user taps Save once
+  double? _lat;
+  double? _lng;
+  bool _submitted = false;
 
   @override
   void dispose() {
@@ -301,7 +289,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
     super.dispose();
   }
 
-    Future<void> _save() async {
+  Future<void> _save() async {
     final formOk = _formKey.currentState!.validate();
     setState(() => _submitted = true);
     if (!formOk || !_pinned || _barangay == null) return;
@@ -317,9 +305,8 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
         mobilityNeed: _need,
       );
       if (!mounted) return;
-      Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const VerifyCodeScreen()),
-      );
+      Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => const VerifyCodeScreen()));
     } catch (e) {
       if (mounted) showComingSoon(context, AkayBackend.friendlyError(e));
     }
@@ -367,6 +354,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
                   options: _barangays,
                   selected: _barangay,
                 );
+                if (!context.mounted) return;
                 if (picked != null) setState(() => _barangay = picked);
               },
             ),
@@ -377,9 +365,8 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
             TextFormField(
               controller: _addressController,
               textInputAction: TextInputAction.done,
-              validator: (v) => (v == null || v.trim().isEmpty)
-                  ? 'Enter your address'
-                  : null,
+              validator: (v) =>
+                  (v == null || v.trim().isEmpty) ? 'Enter your address' : null,
               decoration: fieldDecoration(
                 'Purok, street, house number, or landmark',
               ),
@@ -387,17 +374,18 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
             const SizedBox(height: 12),
             PinLocationTile(
               pinned: _pinned,
-              // TODO: later, use the phone's GPS or a map to pick the location.
-                            onTap: () async {
+              onTap: () async {
                 try {
                   final p = await AkayBackend.currentPosition();
+                  if (!context.mounted) return;
                   setState(() {
                     _pinned = true;
                     _lat = p.latitude;
                     _lng = p.longitude;
                   });
                 } catch (e) {
-                  if (mounted) showComingSoon(context, e.toString());
+                  if (!context.mounted) return;
+                  showComingSoon(context, e.toString());
                 }
               },
             ),
@@ -419,6 +407,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
                   options: options,
                   selected: _members == 1 ? '1 member' : '$_members members',
                 );
+                if (!context.mounted) return;
                 if (picked != null) {
                   setState(() => _members = options.indexOf(picked) + 1);
                 }
@@ -436,6 +425,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
                   options: _needs,
                   selected: _need,
                 );
+                if (!context.mounted) return;
                 if (picked != null) setState(() => _need = picked);
               },
             ),
@@ -449,7 +439,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
 }
 
 // ============================================================
-// Screen 4: One-time code (identity verification)
+// Screen 4: One-time code
 // ============================================================
 class VerifyCodeScreen extends StatefulWidget {
   const VerifyCodeScreen({super.key});
@@ -467,7 +457,6 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
   @override
   void initState() {
     super.initState();
-    // Rebuild the screen whenever the user types or the focus changes.
     _controller.addListener(() => setState(() {}));
     _focusNode.addListener(() => setState(() {}));
   }
@@ -481,12 +470,12 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
 
   bool get _complete => _controller.text.length == _codeLength;
 
-   Future<void> _verify() async {
+  Future<void> _verify() async {
     try {
       await AkayBackend.verifyCode(_controller.text);
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        MaterialPageRoute(builder: (_) => const MainShell()),
         (route) => false,
       );
     } catch (e) {
@@ -526,9 +515,6 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
             style: TextStyle(fontSize: 14, color: kTextGrey, height: 1.45),
           ),
           const SizedBox(height: 22),
-
-          // The six boxes are only for show. One invisible TextField on top
-          // receives the typing, and each box displays one of its digits.
           Stack(
             children: [
               Row(
@@ -561,8 +547,6 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
             ],
           ),
           const SizedBox(height: 18),
-
-          // Green "Registry match found" box appears once all 6 digits are in.
           if (_complete) ...[
             Container(
               width: double.infinity,
@@ -601,8 +585,6 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
             ),
             const SizedBox(height: 18),
           ],
-
-          // The button stays grey until the code is complete.
           PrimaryButton(
             label: 'Verify and open home',
             onPressed: _complete ? _verify : null,
@@ -614,7 +596,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
 }
 
 // ============================================================
-// Shared building blocks for the create account screens
+// Shared building blocks
 // ============================================================
 
 const kAuthTitle = TextStyle(
@@ -624,8 +606,6 @@ const kAuthTitle = TextStyle(
   color: kTextDark,
 );
 
-// The page layout every screen shares: green header on top,
-// then a white card with the screen's content.
 class AuthScaffold extends StatelessWidget {
   final Widget child;
   const AuthScaffold({super.key, required this.child});
@@ -665,7 +645,6 @@ class AuthScaffold extends StatelessWidget {
   }
 }
 
-// The dark green banner: logo, tagline and "Sa oras ng sakuna...".
 class AuthHeader extends StatelessWidget {
   const AuthHeader({super.key});
 
@@ -673,7 +652,6 @@ class AuthHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      // Add the status bar height so text doesn't sit under the clock.
       padding: EdgeInsets.fromLTRB(
         24,
         MediaQuery.of(context).padding.top + 24,
@@ -762,7 +740,6 @@ class AuthHeader extends StatelessWidget {
   }
 }
 
-// The big green button. Pass onPressed: null to make it grey (disabled).
 class PrimaryButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
@@ -820,7 +797,6 @@ class PrimaryButton extends StatelessWidget {
   }
 }
 
-// "<- Back" at the top of the card.
 class BackLink extends StatelessWidget {
   const BackLink({super.key});
 
@@ -853,7 +829,6 @@ class BackLink extends StatelessWidget {
   }
 }
 
-// Small bold label above a text field.
 class FieldLabel extends StatelessWidget {
   final String text;
   const FieldLabel(this.text, {super.key});
@@ -874,7 +849,6 @@ class FieldLabel extends StatelessWidget {
   }
 }
 
-// Small red error message under a custom field.
 class FieldError extends StatelessWidget {
   final String text;
   const FieldError(this.text, {super.key});
@@ -888,7 +862,6 @@ class FieldError extends StatelessWidget {
   }
 }
 
-// The look of every text box (grey fill, rounded, green when focused).
 InputDecoration fieldDecoration(String hint, {Widget? suffix}) {
   OutlineInputBorder border(Color color, [double width = 1]) {
     return OutlineInputBorder(
@@ -912,7 +885,6 @@ InputDecoration fieldDecoration(String hint, {Widget? suffix}) {
   );
 }
 
-// One of the two "Resident" / "Respondent" cards.
 class RoleOption extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -969,7 +941,6 @@ class RoleOption extends StatelessWidget {
                   ],
                 ),
               ),
-              // The round "radio" mark on the right.
               Container(
                 width: 24,
                 height: 24,
@@ -1001,7 +972,6 @@ class RoleOption extends StatelessWidget {
   }
 }
 
-// Looks like a text box, but tapping it opens a list to choose from.
 class PickerField extends StatelessWidget {
   final String? value;
   final String placeholder;
@@ -1049,8 +1019,6 @@ class PickerField extends StatelessWidget {
   }
 }
 
-// Opens a bottom sheet with a list of options and returns the chosen one
-// (or null if the user closes it).
 Future<String?> showOptionSheet(
   BuildContext context, {
   required String title,
@@ -1108,7 +1076,6 @@ Future<String?> showOptionSheet(
   );
 }
 
-// The dashed green "Pin exact home location" box.
 class PinLocationTile extends StatelessWidget {
   final bool pinned;
   final VoidCallback onTap;
@@ -1143,7 +1110,9 @@ class PinLocationTile extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      pinned ? 'Home location pinned' : 'Pin exact home location',
+                      pinned
+                          ? 'Home location pinned'
+                          : 'Pin exact home location',
                       style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
@@ -1169,7 +1138,6 @@ class PinLocationTile extends StatelessWidget {
   }
 }
 
-// Flutter has no built-in dashed border, so we draw one ourselves.
 class DashedBorderPainter extends CustomPainter {
   final Color color;
   const DashedBorderPainter({required this.color});
@@ -1183,10 +1151,7 @@ class DashedBorderPainter extends CustomPainter {
 
     final path = Path()
       ..addRRect(
-        RRect.fromRectAndRadius(
-          Offset.zero & size,
-          const Radius.circular(14),
-        ),
+        RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(14)),
       );
 
     const dash = 4.0;
@@ -1205,7 +1170,6 @@ class DashedBorderPainter extends CustomPainter {
       oldDelegate.color != color;
 }
 
-// One box of the 6-digit code.
 class CodeBox extends StatelessWidget {
   final String digit;
   final bool active;
