@@ -290,6 +290,8 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
   int _members = 1;
   String _need = 'None';
   bool _pinned = false;
+    double? _lat;
+    double? _lng;
   bool _submitted = false; // true after the user taps Save once
 
   @override
@@ -299,15 +301,28 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
     super.dispose();
   }
 
-  void _save() {
+    Future<void> _save() async {
     final formOk = _formKey.currentState!.validate();
     setState(() => _submitted = true);
     if (!formOk || !_pinned || _barangay == null) return;
 
-    // TODO: later, save the household profile to Firebase here.
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const VerifyCodeScreen()),
-    );
+    try {
+      await AkayBackend.saveHousehold(
+        name: _nameController.text.trim(),
+        barangay: _barangay!,
+        address: _addressController.text.trim(),
+        lat: _lat!,
+        lng: _lng!,
+        members: _members,
+        mobilityNeed: _need,
+      );
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const VerifyCodeScreen()),
+      );
+    } catch (e) {
+      if (mounted) showComingSoon(context, AkayBackend.friendlyError(e));
+    }
   }
 
   @override
@@ -373,7 +388,18 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
             PinLocationTile(
               pinned: _pinned,
               // TODO: later, use the phone's GPS or a map to pick the location.
-              onTap: () => setState(() => _pinned = !_pinned),
+                            onTap: () async {
+                try {
+                  final p = await AkayBackend.currentPosition();
+                  setState(() {
+                    _pinned = true;
+                    _lat = p.latitude;
+                    _lng = p.longitude;
+                  });
+                } catch (e) {
+                  if (mounted) showComingSoon(context, e.toString());
+                }
+              },
             ),
             if (_submitted && !_pinned)
               const FieldError('Pin your exact home location'),
@@ -455,12 +481,17 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
 
   bool get _complete => _controller.text.length == _codeLength;
 
-  void _verify() {
-    // TODO: later, check the code with the backend / registry here.
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
-      (route) => false, // remove all earlier screens so Back won't return here
-    );
+   Future<void> _verify() async {
+    try {
+      await AkayBackend.verifyCode(_controller.text);
+      if (!mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        (route) => false,
+      );
+    } catch (e) {
+      if (mounted) showComingSoon(context, AkayBackend.friendlyError(e));
+    }
   }
 
   @override

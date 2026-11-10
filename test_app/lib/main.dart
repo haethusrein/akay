@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'create_account_screens.dart';
+import 'akay_backend.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 
@@ -79,7 +80,7 @@ class HomeScreen extends StatelessWidget {
               const SizedBox(height: 16),
               buildConnectedBanner(),
               const SizedBox(height: 16),
-              buildEmergencyCard(),
+              buildEmergencyCard(context),
               const SizedBox(height: 28),
               buildHouseholdSection(),
               const SizedBox(height: 28),
@@ -175,7 +176,7 @@ class HomeScreen extends StatelessWidget {
   }
 
   // ---------- Big "Do you need help?" card ----------
-  Widget buildEmergencyCard() {
+  Widget buildEmergencyCard(BuildContext context) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -207,8 +208,57 @@ class HomeScreen extends StatelessWidget {
             width: double.infinity,
             height: 56,
             child: ElevatedButton.icon(
-              onPressed: () {
-                // TODO: later, this will send the help request to Firebase
+                            onPressed: () async {
+                // "What's happening?" picker
+                final type = await showModalBottomSheet<String>(
+                  context: context,
+                  builder: (ctx) => SafeArea(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Text(
+                            "What's happening?",
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.water_drop),
+                          title: const Text('Flood'),
+                          onTap: () => Navigator.pop(ctx, 'flood'),
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.medical_services),
+                          title: const Text('Medical emergency'),
+                          onTap: () => Navigator.pop(ctx, 'medical'),
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.local_fire_department),
+                          title: const Text('Fire'),
+                          onTap: () => Navigator.pop(ctx, 'fire'),
+                        ),
+                        ListTile(
+                          leading: const Icon(Icons.help_outline),
+                          title: const Text('Other'),
+                          onTap: () => Navigator.pop(ctx, 'other'),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                    ),
+                  ),
+                );
+                if (type == null) return;
+                try {
+                  await AkayBackend.sendRequest(type: type);
+                  if (context.mounted) {
+                    showComingSoon(context, 'Help request sent. Finding a verified responder...');
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    showComingSoon(context, AkayBackend.friendlyError(e));
+                  }
+                }
               },
               icon: const Icon(Icons.warning_amber_rounded),
               label: const Text(
