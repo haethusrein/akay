@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'main.dart';
 import 'requests_screen.dart';
+import 'community_screen.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -15,7 +16,7 @@ class _MainShellState extends State<MainShell> {
 
   late final List<Widget> _screens = [
     const HomeScreen(),
-    const _PlaceholderScreen(title: 'Community', icon: Icons.map_outlined),
+    const CommunityScreen(),
     const RequestsScreen(),
     const _PlaceholderScreen(title: 'Profile', icon: Icons.person_outline),
   ];
