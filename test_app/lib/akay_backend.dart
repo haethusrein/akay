@@ -36,9 +36,8 @@ class AkayBackend {
   // Firebase has no free phone+password login, so we sign in with a hidden email.
   static String _emailFor(String mobile) => '${_digits(mobile)}@akay.app';
 
-  static int _millis(dynamic ts) => (ts is Timestamp
-      ? ts.millisecondsSinceEpoch
-      : DateTime.now().millisecondsSinceEpoch);
+  static int _millis(dynamic ts) =>
+      ts is Timestamp ? ts.millisecondsSinceEpoch : 0;
 
   static double _round3(double n) => (n * 1000).round() / 1000; // ~110 m
 
@@ -100,12 +99,17 @@ class AkayBackend {
       email: _emailFor(mobile),
       password: password,
     );
-    await _db.doc('users/${cred.user!.uid}').set({
-      'mobile': '+${_digits(mobile)}',
-      'role': role.name, // 'resident' | 'respondent'
-      'verified': false,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+    try {
+      await _db.doc('users/${cred.user!.uid}').set({
+        'mobile': '+${_digits(mobile)}',
+        'role': role.name, // 'resident' | 'respondent'
+        'verified': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {
+      await cred.user?.delete().catchError((_) {});
+      rethrow;
+    }
   }
 
   /// "I already have an account"
@@ -128,37 +132,44 @@ class AkayBackend {
     required double lng,
     required int members,
     required String mobilityNeed,
-    List<String> notes = const [],
-  }) => _db.doc('households/$uid').set({
-    'name': name,
-    'barangay': barangay,
-    'address': address,
-    'location': GeoPoint(lat, lng),
-    'members': members,
-    'mobilityNeed': mobilityNeed,
-    'notes': notes,
-    'updatedAt': FieldValue.serverTimestamp(),
-  }, SetOptions(merge: true));
+    List<String>? notes,
+  }) async {
+    final ref = _db.doc('households/$uid');
+    final existing = await ref.get();
+    await ref.set({
+      'name': name,
+      'barangay': barangay,
+      'address': address,
+      'location': GeoPoint(lat, lng),
+      'members': members,
+      'mobilityNeed': mobilityNeed,
+      if (notes != null || !existing.exists) 'notes': notes ?? <String>[],
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
 
   /// Verify Code screen -> Verify.
-  /// You create the codes by hand in Firestore: verificationCodes/123456 { role: 'resident', used: false }
-  static Future<void> verifyCode(String code) async {
-    final codeRef = _db.doc('verificationCodes/$code');
-    final userRef = _db.doc('users/$uid');
-    final snap = await codeRef.get();
-    final data = snap.data();
-    if (!snap.exists || data == null || data['used'] == true) {
-      throw 'Invalid or already used code.';
-    }
-    final me = await userRef.get();
-    if (data['role'] != me.data()?['role']) {
-      throw 'This code is for a different account type.';
-    }
-
+  /// Codes are created by hand in the console: verificationCodes/<16-char code> { role, used: false, expiresAt }
+  static Future<void> verifyCode(String raw) async {
+    final code = raw.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
+    if (code.length != 16) throw 'Invalid or already used code.';
     final batch = _db.batch();
-    batch.update(codeRef, {'used': true, 'usedBy': uid});
-    batch.update(userRef, {'verified': true, 'verifiedWith': code});
-    await batch.commit();
+    batch.update(_db.doc('verificationCodes/$code'), {
+      'used': true,
+      'usedBy': uid,
+    });
+    batch.update(_db.doc('users/$uid'), {
+      'verified': true,
+      'verifiedWith': code,
+    });
+    try {
+      await batch.commit();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied' || e.code == 'not-found') {
+        throw 'Invalid or already used code.';
+      }
+      rethrow;
+    }
   }
 
   /// Role / verified badge ("Verified" on the Home household card)
@@ -212,14 +223,19 @@ class AkayBackend {
     batch.set(ref, {
       'userId': me,
       'type': type,
-      'description': description,
-      'address': h['address'],
       'barangay': h['barangay'],
-      'location': GeoPoint(pos.latitude, pos.longitude),
+      'location': GeoPoint(_round3(pos.latitude), _round3(pos.longitude)),
       'status': 'pending',
       'responderId': null,
       'responderMobile': null,
-      // snapshot so responders see the "Important responder notes"
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    batch.set(_db.doc('requestDetails/${ref.id}'), {
+      'userId': me,
+      'address': h['address'],
+      'location': GeoPoint(pos.latitude, pos.longitude),
+      'description': description,
       'household': {
         'name': h['name'],
         'members': h['members'],
@@ -227,7 +243,6 @@ class AkayBackend {
         'notes': h['notes'] ?? [],
       },
       'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
     });
     batch.set(_db.doc('publicMarkers/${ref.id}'), {
       'ownerId': me,
@@ -237,6 +252,7 @@ class AkayBackend {
       'lng': _round3(pos.longitude),
       'createdAt': FieldValue.serverTimestamp(),
     });
+    batch.set(_db.doc('activeRequests/$me'), {'requestId': ref.id});
     batch.set(
       _notifsOf(me).doc(),
       _notif(
@@ -256,6 +272,7 @@ class AkayBackend {
     final r = (await ref.get()).data();
     if (r == null) throw 'Request not found.';
     final batch = _db.batch();
+    batch.delete(_db.doc('activeRequests/${r['userId']}'));
     batch.update(ref, {
       'status': 'cancelled',
       'updatedAt': FieldValue.serverTimestamp(),
@@ -311,6 +328,7 @@ class AkayBackend {
     if (r == null) throw 'Request not found.';
     final other = (r['userId'] == uid) ? r['responderId'] : r['userId'];
     final batch = _db.batch();
+    batch.delete(_db.doc('activeRequests/${r['userId']}'));
     batch.update(ref, {
       'status': 'resolved',
       'resolvedAt': FieldValue.serverTimestamp(),
@@ -333,6 +351,11 @@ class AkayBackend {
   static Stream<DocumentSnapshot<Map<String, dynamic>>> watchRequest(
     String id,
   ) => _db.doc('requests/$id').snapshots();
+
+  /// Exact location, address, description and household of a request.
+  static Stream<DocumentSnapshot<Map<String, dynamic>>> watchRequestDetails(
+    String id,
+  ) => _db.doc('requestDetails/$id').snapshots();
 
   static List<Map<String, dynamic>> _sorted(
     QuerySnapshot<Map<String, dynamic>> s,
@@ -448,29 +471,41 @@ class AkayBackend {
   // ---------- notifications (live inside the app) ----------
 
   /// Notifications screen list
-  static Stream<QuerySnapshot<Map<String, dynamic>>> notifications() =>
-      _notifsOf(uid!)
-          .orderBy('createdAt', descending: true)
-          .limit(50)
-          .snapshots();
+  static Stream<QuerySnapshot<Map<String, dynamic>>> notifications() {
+    final me = uid;
+    if (me == null) return const Stream.empty();
+    return _notifsOf(
+      me,
+    ).orderBy('createdAt', descending: true).limit(50).snapshots();
+  }
 
   /// Bell badge number
-  static Stream<int> unreadCount() =>
-      _notifsOf(uid!)
-          .where('isRead', isEqualTo: false)
-          .snapshots()
-          .map((s) => s.size);
+  static Stream<int> unreadCount() {
+    final me = uid;
+    if (me == null) return Stream.value(0);
+    return _notifsOf(
+      me,
+    ).where('isRead', isEqualTo: false).snapshots().map((s) => s.size);
+  }
 
-  static Future<void> markRead(String id) =>
-      _notifsOf(uid!).doc(id).update({'isRead': true});
-  static Future<void> deleteNotification(String id) =>
-      _notifsOf(uid!).doc(id).delete();
+  static Future<void> markRead(String id) async {
+    final me = uid;
+    if (me == null) return;
+    await _notifsOf(me).doc(id).update({'isRead': true});
+  }
+
+  static Future<void> deleteNotification(String id) async {
+    final me = uid;
+    if (me == null) return;
+    await _notifsOf(me).doc(id).delete();
+  }
 
   static Future<void> markAllRead() async {
-    final snap = await _notifsOf(uid!)
-        .where('isRead', isEqualTo: false)
-        .limit(400)
-        .get();
+    final me = uid;
+    if (me == null) return;
+    final snap = await _notifsOf(
+      me,
+    ).where('isRead', isEqualTo: false).limit(400).get();
     final batch = _db.batch();
     for (final d in snap.docs) {
       batch.update(d.reference, {'isRead': true});

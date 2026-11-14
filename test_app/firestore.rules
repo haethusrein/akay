@@ -13,6 +13,8 @@ service cloud.firestore {
     }
     function codePath(code) { return /databases/$(database)/documents/verificationCodes/$(code); }
     function reqAfter(id) { return getAfter(/databases/$(database)/documents/requests/$(id)).data; }
+    function reqNow(id) { return get(/databases/$(database)/documents/requests/$(id)).data; }
+    function hh() { return get(/databases/$(database)/documents/households/$(request.auth.uid)).data; }
 
     // ---------- accounts ----------
     match /users/{uid} {
@@ -65,6 +67,7 @@ service cloud.firestore {
     }
 
     // ---------- emergency requests ----------
+    // Coarse view only: safe for pending responders to list.
     match /requests/{id} {
       allow read: if signedIn() && (
         resource.data.userId == request.auth.uid ||
@@ -73,32 +76,93 @@ service cloud.firestore {
       );
 
       allow create: if signedIn()
+        && userData(request.auth.uid).role == 'resident'
+        && exists(/databases/$(database)/documents/households/$(request.auth.uid))
+        && request.resource.data.keys().hasOnly(['userId', 'type', 'barangay', 'location', 'status', 'responderId', 'responderMobile', 'createdAt', 'updatedAt'])
+        && request.resource.data.keys().hasAll(['userId', 'type', 'barangay', 'location', 'status', 'responderId', 'responderMobile', 'createdAt', 'updatedAt'])
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.status == 'pending'
         && request.resource.data.responderId == null
+        && request.resource.data.responderMobile == null
         && request.resource.data.type in ['flood', 'medical', 'fire', 'other']
-        && request.resource.data.location is latlng;
+        && request.resource.data.location is latlng
+        && request.resource.data.barangay == hh().barangay
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/activeRequests/$(request.auth.uid)).data.requestId == id
+        && existsAfter(/databases/$(database)/documents/requestDetails/$(id));
 
       allow update: if signedIn() && (
         // requester cancels
         (resource.data.userId == request.auth.uid
           && resource.data.status in ['pending', 'matched']
           && request.resource.data.status == 'cancelled'
+          && request.resource.data.updatedAt == request.time
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']))
         // verified responder accepts (only while still pending => only one can win)
         || (isVerifiedResponder()
           && resource.data.status == 'pending'
           && request.resource.data.status == 'matched'
           && request.resource.data.responderId == request.auth.uid
+          && request.resource.data.matchedAt == request.time
+          && request.resource.data.updatedAt == request.time
           && request.resource.data.diff(resource.data).affectedKeys()
                .hasOnly(['status', 'responderId', 'responderMobile', 'matchedAt', 'updatedAt']))
         // requester or assigned responder resolves
         || ((resource.data.userId == request.auth.uid || resource.data.responderId == request.auth.uid)
           && resource.data.status == 'matched'
           && request.resource.data.status == 'resolved'
+          && request.resource.data.resolvedAt == request.time
+          && request.resource.data.updatedAt == request.time
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'resolvedAt', 'updatedAt']))
       );
       allow delete: if false;
+    }
+
+    // Exact location, address, description and household snapshot.
+    // Readable by the requester, and by the assigned responder only while the request is matched.
+    match /requestDetails/{id} {
+      allow read: if signedIn() && (
+        resource.data.userId == request.auth.uid ||
+        (reqNow(id).responderId == request.auth.uid && reqNow(id).status == 'matched')
+      );
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['userId', 'address', 'location', 'description', 'household', 'createdAt'])
+        && request.resource.data.keys().hasAll(['userId', 'address', 'location', 'description', 'household', 'createdAt'])
+        && request.resource.data.userId == request.auth.uid
+        && reqAfter(id).userId == request.auth.uid
+        && reqAfter(id).status == 'pending'
+        && request.resource.data.location is latlng
+        && request.resource.data.address is string
+        && request.resource.data.address.size() <= 300
+        && request.resource.data.address == hh().address
+        && (request.resource.data.description == null
+            || (request.resource.data.description is string && request.resource.data.description.size() <= 500))
+        && request.resource.data.household is map
+        && request.resource.data.household.keys().hasOnly(['name', 'members', 'mobilityNeed', 'notes'])
+        && request.resource.data.household.name == hh().name
+        && request.resource.data.household.members == hh().members
+        && request.resource.data.household.mobilityNeed == hh().mobilityNeed
+        && request.resource.data.household.notes == hh().notes
+        && request.resource.data.household.notes.size() <= 20
+        && request.resource.data.createdAt == request.time;
+
+      allow update, delete: if false;
+    }
+
+    // One pointer per user with an active request; created with the request, deleted when it ends.
+    match /activeRequests/{uid} {
+      allow read: if false;
+      allow create: if isSelf(uid)
+        && request.resource.data.keys().hasOnly(['requestId'])
+        && request.resource.data.requestId is string
+        && reqAfter(request.resource.data.requestId).userId == request.auth.uid
+        && reqAfter(request.resource.data.requestId).status == 'pending';
+      allow update: if false;
+      allow delete: if signedIn()
+        && reqAfter(resource.data.requestId).status in ['cancelled', 'resolved']
+        && (request.auth.uid == uid || request.auth.uid == reqAfter(resource.data.requestId).responderId);
     }
 
     // Coarse (~110 m) map pins for the Community screen. No personal data.

@@ -44,8 +44,6 @@ class RequestStatusScreen extends StatelessWidget {
 
           final status = '${data['status'] ?? 'unknown'}';
           final type = '${data['type'] ?? 'other'}';
-          final address = '${data['address'] ?? 'No address provided'}';
-          final description = '${data['description'] ?? ''}';
           final responderMobile = data['responderMobile'];
 
           final active = status == 'pending' || status == 'matched';
@@ -84,27 +82,37 @@ class RequestStatusScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              AppCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Request details',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: kTextDark,
-                      ),
+              StreamBuilder(
+                stream: AkayBackend.watchRequestDetails(requestId),
+                builder: (context, detailsSnapshot) {
+                  final details = detailsSnapshot.data?.data();
+                  final address =
+                      '${details?['address'] ?? 'No address provided'}';
+                  final description = '${details?['description'] ?? ''}';
+
+                  return AppCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Request details',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            color: kTextDark,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        _detail('Emergency type', _label(type)),
+                        _detail('Address', address),
+                        if (description.isNotEmpty)
+                          _detail('Description', description),
+                        if (responderMobile != null)
+                          _detail('Responder mobile', '$responderMobile'),
+                      ],
                     ),
-                    const SizedBox(height: 16),
-                    _detail('Emergency type', _label(type)),
-                    _detail('Address', address),
-                    if (description.isNotEmpty)
-                      _detail('Description', description),
-                    if (responderMobile != null)
-                      _detail('Responder mobile', '$responderMobile'),
-                  ],
-                ),
+                  );
+                },
               ),
               if (active) ...[
                 const SizedBox(height: 24),
@@ -116,14 +124,14 @@ class RequestStatusScreen extends StatelessWidget {
                       child: const Text('Cancel request'),
                     ),
                   ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () => _confirmResolve(context),
-                    child: const Text('Mark as resolved'),
+                if (status == 'matched')
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => _confirmResolve(context),
+                      child: const Text('Mark as resolved'),
+                    ),
                   ),
-                ),
               ],
             ],
           );

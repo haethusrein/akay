@@ -88,7 +88,7 @@ class RequestsScreen extends StatelessWidget {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              '${status[0].toUpperCase()}${status.substring(1)} - ${r['address'] ?? ''}',
+                              '${status[0].toUpperCase()}${status.substring(1)} - ${r['barangay'] ?? ''}',
                               style: kGreyText,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
