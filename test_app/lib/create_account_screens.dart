@@ -1,8 +1,6 @@
 // ============================================================
 // AKAY - Create account flow
 // ============================================================
-import 'dart:math' show min;
-
 import 'akay_backend.dart';
 
 import 'package:flutter/material.dart';
@@ -449,7 +447,7 @@ class VerifyCodeScreen extends StatefulWidget {
 }
 
 class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
-  static const _codeLength = 6;
+  static const _codeLength = 16;
 
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
@@ -468,7 +466,8 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
     super.dispose();
   }
 
-  bool get _complete => _controller.text.length == _codeLength;
+  bool get _complete =>
+      _controller.text.replaceAll('-', '').length == _codeLength;
 
   Future<void> _verify() async {
     try {
@@ -485,9 +484,6 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final code = _controller.text;
-    final activeIndex = min(code.length, _codeLength - 1);
-
     return AuthScaffold(
       child: Column(
         children: [
@@ -510,41 +506,29 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'We sent a 6-digit code to your registered mobile number.',
+            'Enter the verification code you were given.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 14, color: kTextGrey, height: 1.45),
           ),
           const SizedBox(height: 22),
-          Stack(
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: List.generate(_codeLength, (i) {
-                  return CodeBox(
-                    digit: i < code.length ? code[i] : '',
-                    active: _focusNode.hasFocus && i == activeIndex,
-                  );
-                }),
-              ),
-              Positioned.fill(
-                child: Opacity(
-                  opacity: 0,
-                  child: TextField(
-                    controller: _controller,
-                    focusNode: _focusNode,
-                    autofocus: true,
-                    keyboardType: TextInputType.number,
-                    maxLength: _codeLength,
-                    enableInteractiveSelection: false,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: const InputDecoration(counterText: ''),
-                    onChanged: (_) {
-                      if (_complete) FocusScope.of(context).unfocus();
-                    },
-                  ),
-                ),
-              ),
+          TextField(
+            controller: _controller,
+            focusNode: _focusNode,
+            autofocus: true,
+            maxLength: 19,
+            textCapitalization: TextCapitalization.characters,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 2,
+            ),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9-]')),
             ],
+            decoration: fieldDecoration(
+              'XXXX-XXXX-XXXX-XXXX',
+            ).copyWith(counterText: ''),
           ),
           const SizedBox(height: 18),
           if (_complete) ...[
