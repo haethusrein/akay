@@ -12,6 +12,7 @@ service cloud.firestore {
         && userData(request.auth.uid).verified == true;
     }
     function codePath(code) { return /databases/$(database)/documents/verificationCodes/$(code); }
+    function reqAfter(id) { return getAfter(/databases/$(database)/documents/requests/$(id)).data; }
 
     // ---------- accounts ----------
     match /users/{uid} {
@@ -113,11 +114,28 @@ service cloud.firestore {
       allow read, delete: if isSelf(uid);
       allow update: if isSelf(uid)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
-      // anyone signed in may notify someone, but must sign it with their own uid
+      // writer and recipient must be the two parties of a real request, and the type must match its status
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['type', 'title', 'body', 'requestId', 'isRead', 'fromUid', 'createdAt'])
         && request.resource.data.fromUid == request.auth.uid
-        && request.resource.data.isRead == false;
+        && request.resource.data.isRead == false
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 80
+        && (request.resource.data.body == null
+            || (request.resource.data.body is string && request.resource.data.body.size() <= 200))
+        && request.resource.data.requestId is string
+        && request.resource.data.type in ['request_created', 'request_matched', 'request_resolved', 'request_cancelled']
+        && {
+             'request_created': 'pending',
+             'request_matched': 'matched',
+             'request_resolved': 'resolved',
+             'request_cancelled': 'cancelled'
+           }[request.resource.data.type] == reqAfter(request.resource.data.requestId).status
+        && (request.auth.uid == reqAfter(request.resource.data.requestId).userId
+            || request.auth.uid == reqAfter(request.resource.data.requestId).responderId)
+        && (uid == reqAfter(request.resource.data.requestId).userId
+            || uid == reqAfter(request.resource.data.requestId).responderId);
     }
 
     // ---------- content you manage in the console ----------
