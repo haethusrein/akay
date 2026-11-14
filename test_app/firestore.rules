@@ -1,0 +1,128 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
+    function userData(uid) { return get(/databases/$(database)/documents/users/$(uid)).data; }
+    function isVerifiedResponder() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userData(request.auth.uid).role == 'respondent'
+        && userData(request.auth.uid).verified == true;
+    }
+    function codePath(code) { return /databases/$(database)/documents/verificationCodes/$(code); }
+
+    // ---------- accounts ----------
+    match /users/{uid} {
+      allow read: if isSelf(uid);
+      // sign-up: you can only create your own profile, and never as already verified
+      allow create: if isSelf(uid)
+        && request.resource.data.keys().hasOnly(['mobile', 'role', 'verified', 'createdAt'])
+        && request.resource.data.role in ['resident', 'respondent']
+        && request.resource.data.verified == false;
+      // the ONLY allowed update: becoming verified with an unused code of your own role
+      allow update: if isSelf(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['verified', 'verifiedWith'])
+        && resource.data.verified == false
+        && request.resource.data.verified == true
+        && request.resource.data.verifiedWith is string
+        && get(codePath(request.resource.data.verifiedWith)).data.used == false
+        && get(codePath(request.resource.data.verifiedWith)).data.role == resource.data.role
+        && getAfter(codePath(request.resource.data.verifiedWith)).data.used == true
+        && getAfter(codePath(request.resource.data.verifiedWith)).data.usedBy == request.auth.uid;
+      allow delete: if false;
+    }
+
+    // Codes are created by you (admin) in the Firebase console. The app cannot read them; it can only redeem one together with its own profile update.
+    match /verificationCodes/{code} {
+      allow read: if false;
+      allow create, delete: if false;
+      allow update: if signedIn()
+        && resource.data.used == false
+        && resource.data.expiresAt > request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy'])
+        && request.resource.data.used == true
+        && request.resource.data.usedBy == request.auth.uid
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.verifiedWith == code;
+    }
+
+    match /households/{uid} {
+      allow read: if isSelf(uid);
+      allow create, update: if isSelf(uid)
+        && request.resource.data.name is string && request.resource.data.name.size() <= 80
+        && request.resource.data.members is int
+        && request.resource.data.members >= 1 && request.resource.data.members <= 50;
+      allow delete: if false;
+    }
+
+    // Responders switch "online" and share their position (counted in Community status).
+    match /presence/{uid} {
+      allow read: if signedIn();
+      allow create, update: if isSelf(uid) && isVerifiedResponder();
+      allow delete: if false;
+    }
+
+    // ---------- emergency requests ----------
+    match /requests/{id} {
+      allow read: if signedIn() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.responderId == request.auth.uid ||
+        (isVerifiedResponder() && resource.data.status == 'pending')
+      );
+
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.responderId == null
+        && request.resource.data.type in ['flood', 'medical', 'fire', 'other']
+        && request.resource.data.location is latlng;
+
+      allow update: if signedIn() && (
+        // requester cancels
+        (resource.data.userId == request.auth.uid
+          && resource.data.status in ['pending', 'matched']
+          && request.resource.data.status == 'cancelled'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']))
+        // verified responder accepts (only while still pending => only one can win)
+        || (isVerifiedResponder()
+          && resource.data.status == 'pending'
+          && request.resource.data.status == 'matched'
+          && request.resource.data.responderId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'responderId', 'responderMobile', 'matchedAt', 'updatedAt']))
+        // requester or assigned responder resolves
+        || ((resource.data.userId == request.auth.uid || resource.data.responderId == request.auth.uid)
+          && resource.data.status == 'matched'
+          && request.resource.data.status == 'resolved'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'resolvedAt', 'updatedAt']))
+      );
+      allow delete: if false;
+    }
+
+    // Coarse (~110 m) map pins for the Community screen. No personal data.
+    match /publicMarkers/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow delete: if signedIn() && (resource.data.ownerId == request.auth.uid || isVerifiedResponder());
+      allow update: if false;
+    }
+
+    // ---------- notifications ----------
+    match /notifications/{uid}/items/{id} {
+      allow read, delete: if isSelf(uid);
+      allow update: if isSelf(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+      // anyone signed in may notify someone, but must sign it with their own uid
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['type', 'title', 'body', 'requestId', 'isRead', 'fromUid', 'createdAt'])
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.isRead == false;
+    }
+
+    // ---------- content you manage in the console ----------
+    match /updates/{id}           { allow read: if signedIn(); allow write: if false; }
+    match /evacuationCenters/{id} { allow read: if signedIn(); allow write: if false; }
+    match /config/{id}            { allow read: if true;       allow write: if false; }
+  }
+}
