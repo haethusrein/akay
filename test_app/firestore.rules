@@ -11,6 +11,11 @@ service cloud.firestore {
         && userData(request.auth.uid).role == 'respondent'
         && userData(request.auth.uid).verified == true;
     }
+    function isVerified() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userData(request.auth.uid).verified == true;
+    }
     function codePath(code) { return /databases/$(database)/documents/verificationCodes/$(code); }
     function reqAfter(id) { return getAfter(/databases/$(database)/documents/requests/$(id)).data; }
     function reqNow(id) { return get(/databases/$(database)/documents/requests/$(id)).data; }
@@ -59,10 +64,21 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Responders switch "online" and share their position (counted in Community status).
+    // Responders switch "online" and share a coarse (~1 km) position (counted in Community status).
+    // Readable by verified users only; writes are limited to known keys, server time and Philippine coordinates.
     match /presence/{uid} {
-      allow read: if signedIn();
-      allow create, update: if isSelf(uid) && isVerifiedResponder();
+      allow read: if isVerified();
+      allow create, update: if isSelf(uid) && isVerifiedResponder()
+        && request.resource.data.keys().hasOnly(['online', 'lat', 'lng', 'updatedAt'])
+        && request.resource.data.keys().hasAll(['online', 'updatedAt'])
+        && request.resource.data.online is bool
+        && request.resource.data.updatedAt == request.time
+        && (('lat' in request.resource.data) == ('lng' in request.resource.data))
+        && (!('lat' in request.resource.data)
+            || (request.resource.data.lat is number
+                && request.resource.data.lng is number
+                && request.resource.data.lat >= 4 && request.resource.data.lat <= 22
+                && request.resource.data.lng >= 116 && request.resource.data.lng <= 127));
       allow delete: if false;
     }
 

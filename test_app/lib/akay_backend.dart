@@ -41,6 +41,8 @@ class AkayBackend {
 
   static double _round3(double n) => (n * 1000).round() / 1000; // ~110 m
 
+  static double _round2(double n) => (n * 100).round() / 100; // ~1 km
+
   static CollectionReference<Map<String, dynamic>> _notifsOf(String userId) =>
       _db.collection('notifications').doc(userId).collection('items');
 
@@ -376,7 +378,7 @@ class AkayBackend {
 
   // ---------- responder side ----------
 
-  /// Responder: go online/offline (shares your position for the "Responders online" count).
+  /// Responder: go online/offline (shares a coarse ~1 km position for the "Responders online" count).
   static Future<void> setOnline(bool online) async {
     final data = <String, dynamic>{
       'online': online,
@@ -384,8 +386,8 @@ class AkayBackend {
     };
     if (online) {
       final p = await currentPosition();
-      data['lat'] = p.latitude;
-      data['lng'] = p.longitude;
+      data['lat'] = _round2(p.latitude);
+      data['lng'] = _round2(p.longitude);
     }
     await _db.doc('presence/$uid').set(data, SetOptions(merge: true));
   }
@@ -421,33 +423,60 @@ class AkayBackend {
     double lat,
     double lng,
   ) async {
-    double km(num a, num b) =>
-        Geolocator.distanceBetween(lat, lng, a.toDouble(), b.toDouble()) / 1000;
+    double km(double a, double b) =>
+        Geolocator.distanceBetween(lat, lng, a, b) / 1000;
+
+    double? asNum(dynamic v) => v is num ? v.toDouble() : null;
+
+    // Presence is readable by verified users only; unverified users see 0.
+    Future<QuerySnapshot<Map<String, dynamic>>?> presenceGet() async {
+      try {
+        return await _db
+            .collection('presence')
+            .where('online', isEqualTo: true)
+            .get();
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied') return null;
+        rethrow;
+      }
+    }
 
     final results = await Future.wait([
-      _db.collection('presence').where('online', isEqualTo: true).get(),
+      presenceGet(),
       _db.collection('publicMarkers').get(),
       _db.collection('evacuationCenters').get(),
     ]);
 
+    final presenceSnap = results[0];
+    final markerSnap = results[1]!;
+    final centerSnap = results[2]!;
+
     final cutoff = DateTime.now()
         .subtract(const Duration(minutes: 30))
         .millisecondsSinceEpoch;
-    final online = results[0].docs.where((d) {
+    var online = 0;
+    for (final d in presenceSnap?.docs ?? const []) {
       final x = d.data();
-      return x['lat'] != null &&
-          km(x['lat'], x['lng']) <= nearbyKm &&
-          _millis(x['updatedAt']) >= cutoff;
-    }).length;
-    final active = results[1].docs.where((d) {
+      final pLat = asNum(x['lat']);
+      final pLng = asNum(x['lng']);
+      if (pLat == null || pLng == null) continue;
+      if (km(pLat, pLng) <= nearbyKm && _millis(x['updatedAt']) >= cutoff) {
+        online++;
+      }
+    }
+    var active = 0;
+    for (final d in markerSnap.docs) {
       final x = d.data();
-      return x['lat'] != null && km(x['lat'], x['lng']) <= nearbyKm;
-    }).length;
+      final mLat = asNum(x['lat']);
+      final mLng = asNum(x['lng']);
+      if (mLat == null || mLng == null) continue;
+      if (km(mLat, mLng) <= nearbyKm) active++;
+    }
 
     Map<String, dynamic>? nearest;
-    for (final c in results[2].docs) {
-      final loc = c.data()['location'] as GeoPoint?;
-      if (loc == null) continue;
+    for (final c in centerSnap.docs) {
+      final loc = c.data()['location'];
+      if (loc is! GeoPoint) continue;
       final d = km(loc.latitude, loc.longitude);
       if (nearest == null || d < (nearest['distanceKm'] as double)) {
         nearest = {
