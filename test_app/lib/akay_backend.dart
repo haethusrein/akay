@@ -247,12 +247,14 @@ class AkayBackend {
       'createdAt': FieldValue.serverTimestamp(),
     });
     batch.set(_db.doc('publicMarkers/${ref.id}'), {
-      'ownerId': me,
       'type': type,
       'status': 'pending',
-      'lat': _round3(pos.latitude),
-      'lng': _round3(pos.longitude),
+      'lat': _round2(pos.latitude),
+      'lng': _round2(pos.longitude),
       'createdAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(
+        DateTime.now().add(const Duration(hours: 24)),
+      ),
     });
     batch.set(_db.doc('activeRequests/$me'), {'requestId': ref.id});
     batch.set(
@@ -451,6 +453,7 @@ class AkayBackend {
     final markerSnap = results[1]!;
     final centerSnap = results[2]!;
 
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
     final cutoff = DateTime.now()
         .subtract(const Duration(minutes: 30))
         .millisecondsSinceEpoch;
@@ -470,6 +473,8 @@ class AkayBackend {
       final mLat = asNum(x['lat']);
       final mLng = asNum(x['lng']);
       if (mLat == null || mLng == null) continue;
+      final exp = x['expiresAt'];
+      if (exp is Timestamp && exp.millisecondsSinceEpoch < nowMs) continue;
       if (km(mLat, mLng) <= nearbyKm) active++;
     }
 

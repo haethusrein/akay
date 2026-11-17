@@ -181,12 +181,32 @@ service cloud.firestore {
         && (request.auth.uid == uid || request.auth.uid == reqAfter(resource.data.requestId).responderId);
     }
 
-    // Coarse (~110 m) map pins for the Community screen. No personal data.
+    // Coarse (~1 km) map pins for the Community screen. No user identifier.
+    // The pin id equals the request id; ownership is checked against that request.
+    // A pin can only be created together with a real pending request, and removed once the request leaves pending.
     match /publicMarkers/{id} {
       allow read: if signedIn();
-      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow delete: if signedIn() && (resource.data.ownerId == request.auth.uid || isVerifiedResponder());
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['type', 'status', 'lat', 'lng', 'createdAt', 'expiresAt'])
+        && request.resource.data.keys().hasAll(['type', 'status', 'lat', 'lng', 'createdAt', 'expiresAt'])
+        && reqAfter(id).userId == request.auth.uid
+        && reqAfter(id).status == 'pending'
+        && request.resource.data.type == reqAfter(id).type
+        && request.resource.data.status == 'pending'
+        && request.resource.data.lat is number
+        && request.resource.data.lng is number
+        && request.resource.data.lat >= 4 && request.resource.data.lat <= 22
+        && request.resource.data.lng >= 116 && request.resource.data.lng <= 127
+        && math.abs(request.resource.data.lat - reqAfter(id).location.latitude) <= 0.01
+        && math.abs(request.resource.data.lng - reqAfter(id).location.longitude) <= 0.01
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt <= request.time + duration.value(2, 'd');
       allow update: if false;
+      allow delete: if signedIn()
+        && reqAfter(id).status in ['matched', 'cancelled', 'resolved']
+        && (reqAfter(id).userId == request.auth.uid || reqAfter(id).responderId == request.auth.uid);
     }
 
     // ---------- notifications ----------
