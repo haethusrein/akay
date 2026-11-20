@@ -62,21 +62,25 @@ class AkayBackend {
   };
 
   /// Turns any error into a message you can show in a SnackBar.
-  static String friendlyError(Object e) {
+    static String friendlyError(Object e) {
     if (e is FirebaseAuthException) {
       switch (e.code) {
         case 'email-already-in-use':
-          return 'This mobile number already has an account.';
+          return 'We could not create this account. Check your details, or sign in if you already registered.';
         case 'invalid-credential':
         case 'wrong-password':
         case 'user-not-found':
+        case 'invalid-email':
           return 'Wrong mobile number or password.';
         case 'weak-password':
-          return 'Use at least 6 characters.';
+        case 'password-does-not-meet-requirements':
+          return 'Use at least 8 characters.';
+        case 'too-many-requests':
+          return 'Too many attempts. Try again later.';
         case 'network-request-failed':
           return 'No internet connection.';
         default:
-          return e.message ?? 'Sign-in error.';
+          return 'Something went wrong. Please try again.';
       }
     }
     if (e is FirebaseException) {

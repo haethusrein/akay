@@ -25,8 +25,10 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if isSelf(uid);
       // sign-up: you can only create your own profile, and never as already verified
-      allow create: if isSelf(uid)
+            allow create: if isSelf(uid)
         && request.resource.data.keys().hasOnly(['mobile', 'role', 'verified', 'createdAt'])
+        && request.resource.data.mobile is string
+        && request.resource.data.mobile.matches('^\\+639[0-9]{9}$')
         && request.resource.data.role in ['resident', 'respondent']
         && request.resource.data.verified == false;
       // the ONLY allowed update: becoming verified with an unused code of your own role

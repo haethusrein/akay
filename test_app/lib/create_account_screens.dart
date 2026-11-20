@@ -141,7 +141,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
 
   String? _validatePassword(String? value) {
     if (value == null || value.isEmpty) return 'Enter your password';
-    if (value.length < 6) return 'Use at least 6 characters';
+    if (value.length < 8) return 'Use at least 8 characters';
     return null;
   }
 
