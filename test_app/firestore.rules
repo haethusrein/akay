@@ -25,7 +25,7 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if isSelf(uid);
       // sign-up: you can only create your own profile, and never as already verified
-            allow create: if isSelf(uid)
+      allow create: if isSelf(uid)
         && request.resource.data.keys().hasOnly(['mobile', 'role', 'verified', 'createdAt'])
         && request.resource.data.mobile is string
         && request.resource.data.mobile.matches('^\\+639[0-9]{9}$')
@@ -118,11 +118,37 @@ service cloud.firestore {
           && request.resource.data.updatedAt == request.time
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']))
         // verified responder accepts (only while still pending => only one can win)
+        // must use their own profile number, cannot accept their own request, and must take the one active-job slot
         || (isVerifiedResponder()
           && resource.data.status == 'pending'
+          && resource.data.userId != request.auth.uid
           && request.resource.data.status == 'matched'
           && request.resource.data.responderId == request.auth.uid
+          && request.resource.data.responderMobile == userData(request.auth.uid).mobile
           && request.resource.data.matchedAt == request.time
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'responderId', 'responderMobile', 'matchedAt', 'updatedAt'])
+          && getAfter(/databases/$(database)/documents/responderActive/$(request.auth.uid)).data.requestId == id)
+        // assigned responder releases the request back to pending and frees their slot
+        || (resource.data.responderId == request.auth.uid
+          && resource.data.status == 'matched'
+          && request.resource.data.status == 'pending'
+          && request.resource.data.responderId == null
+          && request.resource.data.responderMobile == null
+          && request.resource.data.matchedAt == null
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'responderId', 'responderMobile', 'matchedAt', 'updatedAt'])
+          && !existsAfter(/databases/$(database)/documents/responderActive/$(request.auth.uid)))
+        // requester re-opens a request whose responder has not resolved it within 15 minutes
+        || (resource.data.userId == request.auth.uid
+          && resource.data.status == 'matched'
+          && request.time > resource.data.matchedAt + duration.value(15, 'm')
+          && request.resource.data.status == 'pending'
+          && request.resource.data.responderId == null
+          && request.resource.data.responderMobile == null
+          && request.resource.data.matchedAt == null
           && request.resource.data.updatedAt == request.time
           && request.resource.data.diff(resource.data).affectedKeys()
                .hasOnly(['status', 'responderId', 'responderMobile', 'matchedAt', 'updatedAt']))
@@ -183,6 +209,24 @@ service cloud.firestore {
         && (request.auth.uid == uid || request.auth.uid == reqAfter(resource.data.requestId).responderId);
     }
 
+    // One pointer per responder with an accepted job; created with the accept, deleted when the job ends or is released.
+    match /responderActive/{uid} {
+      allow read: if false;
+      allow create: if isSelf(uid) && isVerifiedResponder()
+        && request.resource.data.keys().hasOnly(['requestId'])
+        && request.resource.data.requestId is string
+        && reqAfter(request.resource.data.requestId).responderId == request.auth.uid
+        && reqAfter(request.resource.data.requestId).status == 'matched';
+      allow update: if false;
+      allow delete: if signedIn()
+        && (
+          (reqAfter(resource.data.requestId).status in ['cancelled', 'resolved']
+            && (request.auth.uid == uid || request.auth.uid == reqAfter(resource.data.requestId).userId))
+          || (reqAfter(resource.data.requestId).responderId != uid
+            && (request.auth.uid == uid || request.auth.uid == reqAfter(resource.data.requestId).userId))
+        );
+    }
+
     // Coarse (~1 km) map pins for the Community screen. No user identifier.
     // The pin id equals the request id; ownership is checked against that request.
     // A pin can only be created together with a real pending request, and removed once the request leaves pending.
@@ -191,7 +235,8 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly(['type', 'status', 'lat', 'lng', 'createdAt', 'expiresAt'])
         && request.resource.data.keys().hasAll(['type', 'status', 'lat', 'lng', 'createdAt', 'expiresAt'])
-        && reqAfter(id).userId == request.auth.uid
+        && (reqAfter(id).userId == request.auth.uid
+            || (reqNow(id).responderId == request.auth.uid && isVerifiedResponder()))
         && reqAfter(id).status == 'pending'
         && request.resource.data.type == reqAfter(id).type
         && request.resource.data.status == 'pending'
@@ -227,15 +272,18 @@ service cloud.firestore {
         && (request.resource.data.body == null
             || (request.resource.data.body is string && request.resource.data.body.size() <= 200))
         && request.resource.data.requestId is string
-        && request.resource.data.type in ['request_created', 'request_matched', 'request_resolved', 'request_cancelled']
+        && request.resource.data.type in ['request_created', 'request_matched', 'request_resolved', 'request_cancelled', 'request_released']
         && {
              'request_created': 'pending',
              'request_matched': 'matched',
              'request_resolved': 'resolved',
-             'request_cancelled': 'cancelled'
+             'request_cancelled': 'cancelled',
+             'request_released': 'pending'
            }[request.resource.data.type] == reqAfter(request.resource.data.requestId).status
         && (request.auth.uid == reqAfter(request.resource.data.requestId).userId
-            || request.auth.uid == reqAfter(request.resource.data.requestId).responderId)
+            || request.auth.uid == reqAfter(request.resource.data.requestId).responderId
+            || (request.resource.data.type == 'request_released'
+                && request.auth.uid == reqNow(request.resource.data.requestId).responderId))
         && (uid == reqAfter(request.resource.data.requestId).userId
             || uid == reqAfter(request.resource.data.requestId).responderId);
     }

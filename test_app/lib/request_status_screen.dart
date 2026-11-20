@@ -132,6 +132,23 @@ class RequestStatusScreen extends StatelessWidget {
                       child: const Text('Mark as resolved'),
                     ),
                   ),
+                                if (status == 'matched') ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => _confirmResolve(context),
+                      child: const Text('Mark as resolved'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton(
+                      onPressed: () => _confirmReopen(context),
+                      child: const Text('Responder not arriving? Re-open'),
+                    ),
+                  ),
+                ],
               ],
             ],
           );
@@ -139,7 +156,39 @@ class RequestStatusScreen extends StatelessWidget {
       ),
     );
   }
+    Future<void> _confirmReopen(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Re-open request?'),
+        content: const Text(
+          'This frees the current responder and sends your request to other verified responders. '
+          'It is available 15 minutes after a responder accepts.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep waiting'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Re-open'),
+          ),
+        ],
+      ),
+    );
 
+    if (confirmed != true || !context.mounted) return;
+
+    try {
+      await AkayBackend.reopenRequest(requestId);
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(AkayBackend.friendlyError(e))));
+    }
+  }
+  
   Widget _detail(String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),

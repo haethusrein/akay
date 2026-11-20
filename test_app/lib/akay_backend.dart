@@ -16,6 +16,7 @@ class AkayBackend {
   static final _db = FirebaseFirestore.instance;
 
   static const double nearbyKm = 5;
+  static const Duration reopenAfter = Duration(minutes: 15);
 
   static String? get uid => _auth.currentUser?.uid;
   static bool get isSignedIn => _auth.currentUser != null;
@@ -275,12 +276,16 @@ class AkayBackend {
   }
 
   /// Requester cancels.
+    /// Requester cancels.
   static Future<void> cancelRequest(String id) async {
     final ref = _db.doc('requests/$id');
     final r = (await ref.get()).data();
     if (r == null) throw 'Request not found.';
     final batch = _db.batch();
     batch.delete(_db.doc('activeRequests/${r['userId']}'));
+    if (r['responderId'] != null) {
+      batch.delete(_db.doc('responderActive/${r['responderId']}'));
+    }
     batch.update(ref, {
       'status': 'cancelled',
       'updatedAt': FieldValue.serverTimestamp(),
@@ -300,6 +305,8 @@ class AkayBackend {
   }
 
   /// Verified responder accepts. If two try at once, the second fails (rules only allow pending -> matched).
+    /// Verified responder accepts. If two try at once, the second fails (rules only allow pending -> matched).
+  /// A responder can hold one active job at a time.
   static Future<void> acceptRequest(String id) async {
     final ref = _db.doc('requests/$id');
     final r = (await ref.get()).data();
@@ -316,6 +323,7 @@ class AkayBackend {
       'matchedAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
+    batch.set(_db.doc('responderActive/$uid'), {'requestId': id});
     batch.delete(_db.doc('publicMarkers/$id'));
     batch.set(
       _notifsOf(r['userId']).doc(),
@@ -326,10 +334,18 @@ class AkayBackend {
         requestId: id,
       ),
     );
-    await batch.commit();
+    try {
+      await batch.commit();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        throw 'Could not accept. It may already be taken, or you already have an active job.';
+      }
+      rethrow;
+    }
   }
 
   /// Requester or the assigned responder marks it resolved.
+    /// Requester or the assigned responder marks it resolved.
   static Future<void> resolveRequest(String id) async {
     final ref = _db.doc('requests/$id');
     final r = (await ref.get()).data();
@@ -337,6 +353,9 @@ class AkayBackend {
     final other = (r['userId'] == uid) ? r['responderId'] : r['userId'];
     final batch = _db.batch();
     batch.delete(_db.doc('activeRequests/${r['userId']}'));
+    if (r['responderId'] != null) {
+      batch.delete(_db.doc('responderActive/${r['responderId']}'));
+    }
     batch.update(ref, {
       'status': 'resolved',
       'resolvedAt': FieldValue.serverTimestamp(),
@@ -352,6 +371,79 @@ class AkayBackend {
         _notif('request_resolved', 'Request resolved', requestId: id),
       );
     }
+    await batch.commit();
+  }
+    /// Assigned responder hands the request back so another responder can take it.
+  static Future<void> releaseRequest(String id) async {
+    final ref = _db.doc('requests/$id');
+    final r = (await ref.get()).data();
+    if (r == null || r['responderId'] != uid || r['status'] != 'matched') {
+      throw 'This request is not assigned to you.';
+    }
+    final loc = r['location'] as GeoPoint;
+    final batch = _db.batch();
+    batch.update(ref, {
+      'status': 'pending',
+      'responderId': null,
+      'responderMobile': null,
+      'matchedAt': null,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    batch.delete(_db.doc('responderActive/$uid'));
+    batch.set(_db.doc('publicMarkers/$id'), {
+      'type': r['type'],
+      'status': 'pending',
+      'lat': _round2(loc.latitude),
+      'lng': _round2(loc.longitude),
+      'createdAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(
+        DateTime.now().add(const Duration(hours: 24)),
+      ),
+    });
+    batch.set(
+      _notifsOf(r['userId']).doc(),
+      _notif(
+        'request_released',
+        'Your responder had to step away',
+        body: 'Finding another verified responder near you.',
+        requestId: id,
+      ),
+    );
+    await batch.commit();
+  }
+
+  /// Requester re-opens a request whose responder has not resolved it after [reopenAfter].
+  static Future<void> reopenRequest(String id) async {
+    final ref = _db.doc('requests/$id');
+    final r = (await ref.get()).data();
+    if (r == null || r['userId'] != uid || r['status'] != 'matched') {
+      throw 'This request cannot be re-opened.';
+    }
+    final matchedAt = r['matchedAt'];
+    if (matchedAt is! Timestamp ||
+        DateTime.now().difference(matchedAt.toDate()) < reopenAfter) {
+      throw 'You can re-open this request 15 minutes after a responder accepts it.';
+    }
+    final loc = r['location'] as GeoPoint;
+    final batch = _db.batch();
+    batch.update(ref, {
+      'status': 'pending',
+      'responderId': null,
+      'responderMobile': null,
+      'matchedAt': null,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    batch.delete(_db.doc('responderActive/${r['responderId']}'));
+    batch.set(_db.doc('publicMarkers/$id'), {
+      'type': r['type'],
+      'status': 'pending',
+      'lat': _round2(loc.latitude),
+      'lng': _round2(loc.longitude),
+      'createdAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(
+        DateTime.now().add(const Duration(hours: 24)),
+      ),
+    });
     await batch.commit();
   }
 

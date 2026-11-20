@@ -17,6 +17,8 @@ class NotificationsScreen extends StatelessWidget {
         return Icons.cancel_outlined;
       case 'request_created':
         return Icons.send_outlined;
+      case 'request_released':
+        return Icons.replay;
       default:
         return Icons.notifications_none;
     }
