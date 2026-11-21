@@ -155,11 +155,11 @@ class AkayBackend {
     }, SetOptions(merge: true));
   }
 
-  /// Verify Code screen -> Verify.
-  /// Codes are created by hand in the console: verificationCodes/<16-char code> { role, used: false, expiresAt }
+   /// Verify Code screen -> Verify.
+  /// Codes are created by hand in the console: verificationCodes/<6-digit code> { role, used: false, expiresAt }
   static Future<void> verifyCode(String raw) async {
-    final code = raw.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
-    if (code.length != 16) throw 'Invalid or already used code.';
+    final code = raw.replaceAll(RegExp(r'\D'), '');
+    if (code.length != 6) throw 'Invalid or already used code.';
     final batch = _db.batch();
     batch.update(_db.doc('verificationCodes/$code'), {
       'used': true,

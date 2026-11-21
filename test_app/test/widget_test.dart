@@ -62,7 +62,7 @@ void main() {
     expect(find.text('Save and verify household'), findsOneWidget);
   });
 
-  testWidgets('Verify screen asks for the 16-character code', (tester) async {
+    testWidgets('Verify screen asks for the 6-digit code', (tester) async {
     useTallScreen(tester);
     await tester.pumpWidget(app(const VerifyCodeScreen()));
     // pump() with a duration instead of pumpAndSettle(), because the code
@@ -70,6 +70,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
 
     expect(find.text('Enter the one-time code'), findsOneWidget);
-    expect(find.text('XXXX-XXXX-XXXX-XXXX'), findsOneWidget);
+    expect(find.byType(CodeBox), findsNWidgets(6));
   });
 }
