@@ -4,6 +4,7 @@ import '../akay_backend.dart';
 import '../create_account_screens.dart'; // showComingSoon
 import '../main.dart';
 import 'akay_nav.dart';
+import 'emergency_info_screen.dart';
 import 'screen_widgets.dart';
 
 // ============================================================
@@ -163,9 +164,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 title: title,
                 body: body,
                 buttonLabel: 'View advisory',
-                // TODO: open an advisory details screen.
-                onPressed: () =>
-                    showComingSoon(context, 'Advisory details are coming soon.'),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const EmergencyInfoScreen()),
+                ),
               );
             },
           ),
@@ -180,7 +181,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
             body: 'Open and passable. Estimated walk: 14 minutes.',
             buttonLabel: 'View safe route',
             // TODO(backend): real evacuation route.
-            onPressed: () => showComingSoon(context, 'Safe route is coming soon.'),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const EmergencyInfoScreen()),
+            ),
           ),
           const SizedBox(height: 14),
 
