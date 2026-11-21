@@ -2,6 +2,8 @@ import 'dart:math' show min;
 import 'akay_backend.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'screens/sign_in_screen.dart';
+
 
 // main.dart gives us the colors (kGreen, kBackground, ...) and HomeScreen.
 import 'main.dart';
@@ -76,8 +78,9 @@ class WelcomeScreen extends StatelessWidget {
             height: 54,
             child: OutlinedButton(
               onPressed: () {
-                // TODO: open the sign in screen (not designed yet)
-                showComingSoon(context, 'Sign in screen is coming soon.');
+              Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SignInScreen()),
+                );
               },
               style: OutlinedButton.styleFrom(
                 foregroundColor: kGreen,
