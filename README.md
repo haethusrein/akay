@@ -6,7 +6,7 @@ Authors:
 - Lumpas, Jayvhine Mae D.
 - Mancawan, Claire Jasper D.
 - Ocaya, Brent Marcus
-Solon, Shekinah Myrrh O.
+- Solon, Shekinah Myrrh O.
 
 ## Known limitations (prototype)
 
