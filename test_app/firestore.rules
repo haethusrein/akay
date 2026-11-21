@@ -244,8 +244,8 @@ service cloud.firestore {
         && request.resource.data.lng is number
         && request.resource.data.lat >= 4 && request.resource.data.lat <= 22
         && request.resource.data.lng >= 116 && request.resource.data.lng <= 127
-        && math.abs(request.resource.data.lat - reqAfter(id).location.latitude) <= 0.01
-        && math.abs(request.resource.data.lng - reqAfter(id).location.longitude) <= 0.01
+        && math.abs(request.resource.data.lat - reqAfter(id).location.latitude()) <= 0.01
+        && math.abs(request.resource.data.lng - reqAfter(id).location.longitude()) <= 0.01
         && request.resource.data.createdAt == request.time
         && request.resource.data.expiresAt is timestamp
         && request.resource.data.expiresAt > request.time

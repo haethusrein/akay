@@ -2,8 +2,6 @@ import 'dart:math' show min;
 import 'akay_backend.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
-// main.dart gives us the colors (kGreen, kBackground, ...) and HomeScreen.
 import 'main.dart';
 import 'screens/sign_in_screen.dart';
 
