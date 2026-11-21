@@ -35,7 +35,7 @@ class RequestSyncStatusScreen extends StatefulWidget {
 class _RequestSyncStatusScreenState extends State<RequestSyncStatusScreen> {
   late final TimeOfDay _savedAt = TimeOfDay.now();
   TimeOfDay? _lastRetry;
-  late SyncState _state = widget.state;
+  late final SyncState _state = widget.state;
 
   void _retry() {
     // TODO(backend): try to send the saved request again.
