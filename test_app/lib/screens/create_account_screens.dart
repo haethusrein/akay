@@ -3,6 +3,7 @@ import 'akay_backend.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'main.dart';
+import 'screens/screen_widgets.dart';
 import 'screens/sign_in_screen.dart';
 
 // ============================================================
@@ -95,10 +96,7 @@ class WelcomeScreen extends StatelessWidget {
           const SizedBox(height: 8),
           Center(
             child: TextButton.icon(
-              onPressed: () {
-                // TODO: open the phone dialer
-                showComingSoon(context, 'Calling the hotline comes later.');
-              },
+              onPressed: () => callHotline(context),
               icon: const Icon(Icons.phone_outlined, size: 18),
               label: const Text(
                 'Call emergency hotline',

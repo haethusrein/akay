@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../akay_backend.dart';
 import '../create_account_screens.dart'; // fieldDecoration, FieldLabel, showComingSoon
 import '../main.dart'; // colors + HomeScreen
+import 'emergency_info_screen.dart';
 import 'screen_widgets.dart';
 
 // ============================================================
@@ -155,9 +156,9 @@ class _SignInScreenState extends State<SignInScreen> {
             const SizedBox(height: 12),
             OutlineAction(
               label: 'Open offline information',
-              // TODO: open the Emergency information screen (wireframe 09) when it is built.
-              onPressed: () =>
-                  showComingSoon(context, 'Offline information is coming soon.'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const EmergencyInfoScreen()),
+              ),
             ),
           ],
         ),

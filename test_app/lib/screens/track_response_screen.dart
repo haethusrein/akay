@@ -136,7 +136,7 @@ class _TrackResponseScreenState extends State<TrackResponseScreen> {
                 const StepRow(
                   number: 1,
                   title: 'Request received',
-                  state: StepState.done,
+                  state: StepStatus.done,
                 ),
                 StepRow(
                   number: 2,
@@ -145,16 +145,16 @@ class _TrackResponseScreenState extends State<TrackResponseScreen> {
                       ? (responder == null ? 'A responder is coming' : 'Contact: $responder')
                       : 'Waiting for a responder to accept',
                   state: matched
-                      ? StepState.done
-                      : StepState.current,
+                      ? StepStatus.done
+                      : StepStatus.current,
                 ),
                 StepRow(
                   number: 3,
                   title: 'Help arrives',
                   caption: resolved ? 'Marked resolved' : 'Waiting',
                   state: resolved
-                      ? StepState.done
-                      : (matched ? StepState.current : StepState.waiting),
+                      ? StepStatus.done
+                      : (matched ? StepStatus.current : StepStatus.waiting),
                   isLast: true,
                 ),
               ],
