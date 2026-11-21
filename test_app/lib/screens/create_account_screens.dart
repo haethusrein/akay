@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 // main.dart gives us the colors (kGreen, kBackground, ...) and HomeScreen.
 import 'main.dart';
+import 'screens/screen_widgets.dart';
 import 'screens/sign_in_screen.dart';
 
 // ============================================================
@@ -97,10 +98,7 @@ class WelcomeScreen extends StatelessWidget {
           const SizedBox(height: 8),
           Center(
             child: TextButton.icon(
-              onPressed: () {
-                // TODO: open the phone dialer
-                showComingSoon(context, 'Calling the hotline comes later.');
-              },
+              onPressed: () => callHotline(context),
               icon: const Icon(Icons.phone_outlined, size: 18),
               label: const Text(
                 'Call emergency hotline',

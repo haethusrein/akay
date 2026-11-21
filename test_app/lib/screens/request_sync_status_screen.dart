@@ -44,7 +44,7 @@ class _RequestSyncStatusScreenState extends State<RequestSyncStatusScreen> {
   }
 
   // Step states for the 3-step list (Shared Nearby shows as a note, see below).
-  StepState _stepFor(int step) {
+  StepStatus _stepFor(int step) {
     // step 1 = Saved on this device, 2 = Waiting to sync, 3 = Receipt confirmed
     final reached = switch (_state) {
       SyncState.locallySaved => 1,
@@ -52,11 +52,11 @@ class _RequestSyncStatusScreenState extends State<RequestSyncStatusScreen> {
       SyncState.sharedNearby => 2,
       SyncState.receiptConfirmed => 3,
     };
-    if (step < reached) return StepState.done;
+    if (step < reached) return StepStatus.done;
     if (step == reached) {
-      return _state == SyncState.receiptConfirmed ? StepState.done : StepState.current;
+      return _state == SyncState.receiptConfirmed ? StepStatus.done : StepStatus.current;
     }
-    return StepState.waiting;
+    return StepStatus.waiting;
   }
 
   @override

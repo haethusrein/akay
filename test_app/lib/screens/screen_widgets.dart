@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../main.dart'; // colors: kGreen, kRed, kBorder, ...
 
@@ -12,6 +13,23 @@ import '../main.dart'; // colors: kGreen, kRed, kBorder, ...
 // While the backend is empty, show the Figma sample data so you can see the layout.
 // Set to false before the final demo to show only real data.
 const bool kShowSampleData = true;
+
+// ---------- Hotline ----------
+const kHotlineNumber = '911';
+
+/// Opens the phone's dialer with the hotline number filled in.
+/// (The person still has to press the green call button.)
+Future<void> callHotline(BuildContext context) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final ok = await launchUrl(Uri(scheme: 'tel', path: kHotlineNumber));
+    if (!ok) throw 'no dialer';
+  } catch (_) {
+    messenger.showSnackBar(
+      const SnackBar(content: Text('Could not open the dialer. Please call $kHotlineNumber.')),
+    );
+  }
+}
 
 // ---------- Request types (same values AkayBackend.sendRequest expects) ----------
 const kRequestTypes = ['flood', 'medical', 'fire', 'other'];
@@ -211,13 +229,13 @@ class StatusBanner extends StatelessWidget {
 }
 
 // ---------- One step in a progress list (Saved / Waiting / Confirmed ...) ----------
-enum StepState { done, current, waiting }
+enum StepStatus { done, current, waiting }
 
 class StepRow extends StatelessWidget {
   final int number;
   final String title;
   final String? caption;
-  final StepState state;
+  final StepStatus state;
   final bool isLast;
 
   const StepRow({
@@ -234,21 +252,21 @@ class StepRow extends StatelessWidget {
     // The status is shown with an icon AND text, never color alone.
     final Widget dot;
     switch (state) {
-      case StepState.done:
+      case StepStatus.done:
         dot = const CircleAvatar(
           radius: 14,
           backgroundColor: kGreen,
           child: Icon(Icons.check, size: 16, color: Colors.white),
         );
         break;
-      case StepState.current:
+      case StepStatus.current:
         dot = const CircleAvatar(
           radius: 14,
           backgroundColor: kAmberDot,
           child: Icon(Icons.circle, size: 10, color: Colors.white),
         );
         break;
-      case StepState.waiting:
+      case StepStatus.waiting:
         dot = CircleAvatar(
           radius: 14,
           backgroundColor: Colors.white,
@@ -297,10 +315,10 @@ class StepRow extends StatelessWidget {
                     title,
                     style: TextStyle(
                       fontSize: 15,
-                      fontWeight: state == StepState.waiting
+                      fontWeight: state == StepStatus.waiting
                           ? FontWeight.w400
                           : FontWeight.w700,
-                      color: state == StepState.waiting ? kTextGrey : kTextDark,
+                      color: state == StepStatus.waiting ? kTextGrey : kTextDark,
                     ),
                   ),
                   if (caption != null) ...[
@@ -456,7 +474,7 @@ class DetailRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 96, child: Text(label, style: kGreyText)),
+          SizedBox(width: 124, child: Text(label, style: kGreyText)),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -549,4 +567,63 @@ Future<bool> confirmDialog(
     ),
   );
   return result ?? false;
+}
+
+// ---------- Small drawn map: "You" in the middle, optional red "!" pin ----------
+class MiniMap extends StatelessWidget {
+  final bool showPin;
+  const MiniMap({super.key, this.showPin = true});
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        height: 170,
+        width: double.infinity,
+        color: const Color(0xFFE9EFEB),
+        child: Stack(
+          children: [
+            const Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 40,
+              child: ColoredBox(color: Color(0xFFC6DBE3)),
+            ),
+            Align(
+              alignment: const Alignment(-0.35, 0.45),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: kTextDark),
+                ),
+                child: const Text(
+                  'You',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+            if (showPin)
+              const Align(
+                alignment: Alignment(0.45, -0.35),
+                child: CircleAvatar(
+                  radius: 13,
+                  backgroundColor: kRed,
+                  child: Text(
+                    '!',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 }

@@ -3,6 +3,8 @@ import 'create_account_screens.dart';
 import 'akay_backend.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
+import 'screens/akay_nav.dart';
+import 'screens/request_help_sheet.dart';
 
 // ============================================================
 // AKAY - Home screen (front end only, no backend yet)
@@ -76,7 +78,7 @@ class HomeScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              buildHeader(),
+              const AkayTopBar(),
               const SizedBox(height: 16),
               buildConnectedBanner(),
               const SizedBox(height: 16),
@@ -95,31 +97,8 @@ class HomeScreen extends StatelessWidget {
         ),
       ),
 
-      // Bottom navigation bar (not clickable yet - selectedIndex is fixed at 0)
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: 0,
-        backgroundColor: Colors.white,
-        indicatorColor: kLightGreen,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home, color: kGreen),
-            label: 'Home',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.map_outlined),
-            label: 'Community',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.history),
-            label: 'Requests',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            label: 'Profile',
-          ),
-        ],
-      ),
+      // Bottom navigation bar (Home / Community / Requests / Profile)
+      bottomNavigationBar: const AkayBottomNav(selectedIndex: 0),
     );
   }
 
@@ -208,58 +187,7 @@ class HomeScreen extends StatelessWidget {
             width: double.infinity,
             height: 56,
             child: ElevatedButton.icon(
-                            onPressed: () async {
-                // "What's happening?" picker
-                final type = await showModalBottomSheet<String>(
-                  context: context,
-                  builder: (ctx) => SafeArea(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Text(
-                            "What's happening?",
-                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-                          ),
-                        ),
-                        ListTile(
-                          leading: const Icon(Icons.water_drop),
-                          title: const Text('Flood'),
-                          onTap: () => Navigator.pop(ctx, 'flood'),
-                        ),
-                        ListTile(
-                          leading: const Icon(Icons.medical_services),
-                          title: const Text('Medical emergency'),
-                          onTap: () => Navigator.pop(ctx, 'medical'),
-                        ),
-                        ListTile(
-                          leading: const Icon(Icons.local_fire_department),
-                          title: const Text('Fire'),
-                          onTap: () => Navigator.pop(ctx, 'fire'),
-                        ),
-                        ListTile(
-                          leading: const Icon(Icons.help_outline),
-                          title: const Text('Other'),
-                          onTap: () => Navigator.pop(ctx, 'other'),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                    ),
-                  ),
-                );
-                if (type == null) return;
-                try {
-                  await AkayBackend.sendRequest(type: type);
-                  if (context.mounted) {
-                    showComingSoon(context, 'Help request sent. Finding a verified responder...');
-                  }
-                } catch (e) {
-                  if (context.mounted) {
-                    showComingSoon(context, AkayBackend.friendlyError(e));
-                  }
-                }
-              },
+                            onPressed: () => showRequestHelpSheet(context),
               icon: const Icon(Icons.warning_amber_rounded),
               label: const Text(
                 'Request help now',
