@@ -11,12 +11,16 @@ import 'screen_widgets.dart';
 // AKAY - Community tab (Figma "Community")
 //
 // Backend used:
-//   AkayBackend.currentPosition()          "Find my location"
-//   AkayBackend.communityStatus(lat, lng)  the 3 numbers under the map
+//   AkayBackend.currentPosition()          GPS position
+//   AkayBackend.communityStatus(lat, lng)  the 3 numbers, nearest center, responders
 //   AkayBackend.communityUpdates()         the "Active advisory" card
+//   AkayBackend.myHousehold()              the area label above the map
 //
-// TODO(backend): the map is a drawing for now. Pins should come from
-// AkayBackend.mapMarkers(). Recommended route and Response team are sample text.
+// Nothing on this screen is sample data. A number or card appears only when
+// the backend returned it; otherwise the screen shows "-" or hides the card.
+//
+// TODO(backend): the map is an illustration. Pins should come from
+// AkayBackend.mapMarkers().
 // ============================================================
 class CommunityScreen extends StatefulWidget {
   const CommunityScreen({super.key});
@@ -27,39 +31,72 @@ class CommunityScreen extends StatefulWidget {
 
 class _CommunityScreenState extends State<CommunityScreen> {
   Map<String, dynamic>? _status; // result of communityStatus()
-  bool _locating = false;
+  DateTime? _updatedAt;
+  bool _locating = true; // the first load starts as soon as the tab opens
 
-  Future<void> _findMe() async {
-    setState(() => _locating = true);
+  @override
+  void initState() {
+    super.initState();
+    _fetch(quiet: true);
+  }
+
+  // quiet = true on the automatic first load, so a denied permission does not
+  // pop an error before the person has touched anything.
+  Future<void> _fetch({required bool quiet}) async {
     try {
       final p = await AkayBackend.currentPosition();
       final s = await AkayBackend.communityStatus(p.latitude, p.longitude);
-      if (mounted) setState(() => _status = s);
+      if (!mounted) return;
+      setState(() {
+        _status = s;
+        _updatedAt = DateTime.now();
+      });
     } catch (e) {
-      if (mounted) showComingSoon(context, AkayBackend.friendlyError(e));
+      if (mounted && !quiet) {
+        showComingSoon(context, AkayBackend.friendlyError(e));
+      }
     } finally {
       if (mounted) setState(() => _locating = false);
     }
   }
 
-  // Number under the map. Uses sample numbers until the person taps "Find my location".
+  void _refresh() {
+    setState(() => _locating = true);
+    _fetch(quiet: false);
+  }
+
+  // Number under the map. "-" until the backend has answered.
   String _stat(String key) {
-    if (_status == null) return kShowSampleData ? _sample[key]! : '-';
+    final s = _status;
+    if (s == null) return '-';
     switch (key) {
       case 'online':
-        return '${_status!['respondersOnline']}';
+        return '${s['respondersOnline']}';
       case 'active':
-        return '${_status!['activeRequests']}';
+        return '${s['activeRequests']}';
       default:
-        final c = _status!['nearestCenter'];
+        final c = s['nearestCenter'];
         return c == null ? '-' : '${c['distanceKm']} km';
     }
   }
 
-  static const _sample = {'online': '12', 'active': '3', 'center': '1.2 km'};
+  String get _updatedLabel {
+    final t = _updatedAt;
+    if (t != null) return 'Updated ${TimeOfDay.fromDateTime(t).format(context)}';
+    return _locating ? 'Updating...' : 'Not updated';
+  }
+
+  void _openInfo() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const EmergencyInfoScreen()),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final center = _status?['nearestCenter'];
+    final online = _status?['respondersOnline'];
+
     return TabScaffold(
       index: 1,
       child: Column(
@@ -70,9 +107,9 @@ class _CommunityScreenState extends State<CommunityScreen> {
             children: [
               const Expanded(
                 child: ScreenTitle(
-                  label: 'LIVE BARANGAY OVERVIEW',
+                  label: 'LIVE COMMUNITY OVERVIEW',
                   title: 'Community',
-                  subtitle: 'Monitor local alerts, responders, and safe evacuation routes.',
+                  subtitle: 'Monitor local alerts, responders, and evacuation centers.',
                 ),
               ),
               const SizedBox(width: 8),
@@ -80,42 +117,58 @@ class _CommunityScreenState extends State<CommunityScreen> {
                 label: 'Find my location',
                 icon: Icons.location_on_outlined,
                 loading: _locating,
-                onPressed: _findMe,
+                onPressed: _refresh,
               ),
             ],
           ),
           const SizedBox(height: 20),
 
-          // ----- Live response map -----
+          // ----- Response map -----
           AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
+                Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('BARANGAY LUMBO', style: kSmallLabel),
-                          SizedBox(height: 6),
-                          Text(
-                            'Live response map',
+                          // Area label: the household's barangay when there is one.
+                          StreamBuilder(
+                            stream: AkayBackend.myHousehold(),
+                            builder: (context, snapshot) {
+                              final b = snapshot.data?.data()?['barangay'];
+                              return Text(
+                                b is String ? b.toUpperCase() : 'AROUND YOU',
+                                style: kSmallLabel,
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 6),
+                          const Text(
+                            'Response map',
                             style: TextStyle(fontSize: 22, color: kTextDark),
                           ),
                         ],
                       ),
                     ),
                     Padding(
-                      padding: EdgeInsets.only(top: 2),
+                      padding: const EdgeInsets.only(top: 2),
                       child: Row(
                         children: [
-                          Icon(Icons.circle, size: 8, color: Color(0xFF4DA37F)),
-                          SizedBox(width: 6),
+                          Icon(
+                            Icons.circle,
+                            size: 8,
+                            color: _updatedAt == null
+                                ? kTextGrey
+                                : const Color(0xFF4DA37F),
+                          ),
+                          const SizedBox(width: 6),
                           Text(
-                            'Updating live',
-                            style: TextStyle(
+                            _updatedLabel,
+                            style: const TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
                               color: kGreen,
@@ -127,14 +180,14 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   ],
                 ),
                 const SizedBox(height: 16),
-                const _FakeMap(),
+                const _MapPreview(),
                 const SizedBox(height: 16),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    StatItem(value: _stat('online'), label: 'Responders online'),
-                    StatItem(value: _stat('active'), label: 'Active requests'),
-                    StatItem(value: _stat('center'), label: 'Nearest center'),
+                    _StatItem(value: _stat('online'), label: 'Responders online'),
+                    _StatItem(value: _stat('active'), label: 'Active requests'),
+                    _StatItem(value: _stat('center'), label: 'Nearest center'),
                   ],
                 ),
               ],
@@ -142,63 +195,87 @@ class _CommunityScreenState extends State<CommunityScreen> {
           ),
           const SizedBox(height: 16),
 
-          // ----- Active advisory (first community update, or the Figma sample) -----
+          // ----- Active advisory: the newest community update, hidden when there is none -----
           StreamBuilder(
             stream: AkayBackend.communityUpdates(),
             builder: (context, snapshot) {
               final docs = snapshot.data?.docs ?? [];
-              String title = 'Flood alert — Level 2';
-              String body = 'Residents near Pulangi River should prepare to evacuate.';
-              if (docs.isNotEmpty) {
-                final d = docs.first.data();
-                title = (d['title'] ?? title).toString();
-                body = (d['body'] ?? '').toString();
-              } else if (!kShowSampleData) {
-                return const SizedBox.shrink();
-              }
-              return _InfoCard(
-                icon: Icons.warning_amber_rounded,
-                iconBg: const Color(0xFFFFF3DC),
-                iconColor: const Color(0xFFE0A030),
-                label: 'ACTIVE ADVISORY',
-                title: title,
-                body: body,
-                buttonLabel: 'View advisory',
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const EmergencyInfoScreen()),
+              if (docs.isEmpty) return const SizedBox.shrink();
+              final d = docs.first.data();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 14),
+                child: _InfoCard(
+                  icon: Icons.warning_amber_rounded,
+                  iconBg: const Color(0xFFFFF3DC),
+                  iconColor: const Color(0xFFE0A030),
+                  label: 'ACTIVE ADVISORY',
+                  title: (d['title'] ?? 'Community update').toString(),
+                  body: (d['body'] ?? '').toString(),
+                  buttonLabel: 'View advisory',
+                  onPressed: _openInfo,
                 ),
               );
             },
           ),
-          const SizedBox(height: 14),
 
-          _InfoCard(
-            icon: Icons.alt_route,
-            iconBg: const Color(0xFFE8F1FB),
-            iconColor: const Color(0xFF3B82C4),
-            label: 'RECOMMENDED ROUTE',
-            title: 'Lumbo Elementary School',
-            body: 'Open and passable. Estimated walk: 14 minutes.',
-            buttonLabel: 'View safe route',
-            // TODO(backend): real evacuation route.
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const EmergencyInfoScreen()),
+          // ----- Nearest evacuation center: only when the backend found one -----
+          if (center != null) ...[
+            _InfoCard(
+              icon: Icons.alt_route,
+              iconBg: const Color(0xFFE8F1FB),
+              iconColor: const Color(0xFF3B82C4),
+              label: 'NEAREST EVACUATION CENTER',
+              title: '${center['name'] ?? 'Evacuation center'}',
+              body: 'About ${center['distanceKm']} km from you.',
+              buttonLabel: 'View evacuation info',
+              onPressed: _openInfo,
             ),
-          ),
-          const SizedBox(height: 14),
+            const SizedBox(height: 14),
+          ],
 
+          // ----- Response team: real count, no invented breakdown -----
           _InfoCard(
             icon: Icons.people_outline,
             iconBg: kLightGreen,
             iconColor: kGreen,
             label: 'RESPONSE TEAM',
-            title: '${_stat('online')} responders available',
-            body: '8 barangay responders and 4 verified volunteers online.',
+            title: online == null
+                ? 'Checking responders...'
+                : (online == 1 ? '1 responder online' : '$online responders online'),
+            body:
+                'Verified responders who shared their location within '
+                '${AkayBackend.nearbyKm.toStringAsFixed(0)} km in the last 30 minutes.',
             buttonLabel: 'Refresh status',
-            onPressed: _findMe,
+            onPressed: _refresh,
           ),
         ],
       ),
+    );
+  }
+}
+
+// ---------- One number with a small label under it ----------
+class _StatItem extends StatelessWidget {
+  final String value;
+  final String label;
+
+  const _StatItem({required this.value, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w600,
+            color: kTextDark,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(label, textAlign: TextAlign.center, style: kGreyText),
+      ],
     );
   }
 }
@@ -276,9 +353,10 @@ class _InfoCard extends StatelessWidget {
   }
 }
 
-// ---------- Drawn map (same look as Home) ----------
-class _FakeMap extends StatelessWidget {
-  const _FakeMap();
+// ---------- Map illustration (same look as Home) ----------
+// A drawing only: no pins and no place names, so it cannot be mistaken for live data.
+class _MapPreview extends StatelessWidget {
+  const _MapPreview();
 
   @override
   Widget build(BuildContext context) {
@@ -299,39 +377,8 @@ class _FakeMap extends StatelessWidget {
               child: ColoredBox(color: Color(0xFFC6DBE3)),
             ),
             Align(
-              alignment: Alignment(-0.4, -0.7),
-              child: Text('Purok 3', style: kGreyText),
-            ),
-            Align(
-              alignment: Alignment(0.7, 0.3),
-              child: Text('Purok 4', style: kGreyText),
-            ),
-            Align(
-              alignment: Alignment(0.7, -0.75),
-              child: Icon(Icons.location_on, color: Color(0xFF4DA37F)),
-            ),
-            Align(
-              alignment: Alignment(-0.6, 0.45),
-              child: Icon(Icons.location_on, color: kRed),
-            ),
-            Align(
-              alignment: Alignment(0.55, 0.78),
-              child: Icon(Icons.location_on, color: Color(0xFF4DA37F)),
-            ),
-            Align(
-              alignment: Alignment(-0.2, 0.8),
-              child: Text(
-                'Evacuation center',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: kGreen,
-                ),
-              ),
-            ),
-            Align(
-              alignment: Alignment(-0.05, -0.05),
-              child: Icon(Icons.home, size: 34, color: kGreen),
+              alignment: Alignment(0.2, 0),
+              child: Text('Map preview - live pins coming soon', style: kGreyText),
             ),
           ],
         ),
