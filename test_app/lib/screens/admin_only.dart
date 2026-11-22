@@ -1,6 +1,7 @@
 // admin tab for various back-end functions
 // accessible only to one admin account (admin, 00000000)
 // for verification, one-time pin generation, and logging exception errors
+// view all user acounts and roles
 // on new account creation, backend should generate a one-time pin and send it to the admin for verification
 // the admin can 'accept' 911 calls (for demonstration)
 // special one-time pin for demonstration purposes
