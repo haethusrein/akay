@@ -12,8 +12,7 @@ import 'screen_widgets.dart';
 // AkayBackend.pendingRequests()).
 //
 // Backend used: AkayBackend.acceptRequest(id)
-// TODO(backend): "Decline" and "Report suspicious ping" have no backend
-// methods yet. They only close the screen / show a message.
+// Also: AkayBackend.declineRequest(id), AkayBackend.reportRequest(id)
 // ============================================================
 class RespondPingScreen extends StatefulWidget {
   final Map<String, dynamic> request;
@@ -52,6 +51,35 @@ class _RespondPingScreenState extends State<RespondPingScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
+      showComingSoon(context, AkayBackend.friendlyError(e));
+    }
+  }
+
+  Future<void> _decline() async {
+    final id = widget.request['id'];
+    if (id != null) {
+      try {
+        await AkayBackend.declineRequest(id.toString())
+            .timeout(const Duration(seconds: 4));
+      } catch (_) {/* hiding it is best-effort; still close the screen */}
+    }
+    if (mounted) Navigator.of(context).maybePop();
+  }
+
+  Future<void> _report() async {
+    final id = widget.request['id'];
+    if (id == null) {
+      showComingSoon(context, 'This is sample data. Nothing was reported.');
+      return;
+    }
+    try {
+      await AkayBackend.reportRequest(id.toString())
+          .timeout(const Duration(seconds: 4));
+      if (!mounted) return;
+      showComingSoon(context, 'Thanks. Admins will review this ping.');
+      Navigator.of(context).maybePop();
+    } catch (e) {
+      if (!mounted) return;
       showComingSoon(context, AkayBackend.friendlyError(e));
     }
   }
@@ -178,14 +206,11 @@ class _RespondPingScreenState extends State<RespondPingScreen> {
           const SizedBox(height: 12),
           OutlineAction(
             label: 'Decline — show next responder',
-            // TODO(backend): tell the server this responder declined.
-            onPressed: _busy ? null : () => Navigator.of(context).maybePop(),
+            onPressed: _busy ? null : _decline,
           ),
           TextLinkButton(
             label: 'Report suspicious ping',
-            // TODO(backend): send a report for admins to review.
-            onPressed: () =>
-                showComingSoon(context, 'Reporting is coming soon.'),
+            onPressed: _report,
           ),
         ],
       ),

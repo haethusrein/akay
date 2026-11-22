@@ -256,6 +256,50 @@ service cloud.firestore {
         && (reqAfter(id).userId == request.auth.uid || reqAfter(id).responderId == request.auth.uid);
     }
 
+    // ---------- evacuation, check-in, declines, reports ----------
+    match /evacuationStatus/{uid} {
+      allow read: if isSelf(uid);
+      allow create, update: if isSelf(uid)
+        && request.resource.data.keys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['home', 'transit', 'evacuated']
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /checkIns/{id} {
+      allow read: if signedIn() && resource.data.responderId == request.auth.uid;
+      allow create: if isVerifiedResponder()
+        && request.resource.data.keys().hasOnly(['responderId', 'household', 'membersPresent', 'allConfirmed', 'createdAt'])
+        && request.resource.data.responderId == request.auth.uid
+        && request.resource.data.household is string
+        && request.resource.data.household.size() >= 1 && request.resource.data.household.size() <= 80
+        && request.resource.data.membersPresent is int
+        && request.resource.data.membersPresent >= 1 && request.resource.data.membersPresent <= 50
+        && request.resource.data.allConfirmed == true
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /responderDeclines/{uid}/items/{requestId} {
+      allow read: if isSelf(uid) && isVerifiedResponder();
+      allow create: if isSelf(uid) && isVerifiedResponder()
+        && request.resource.data.keys().hasOnly(['createdAt'])
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /reports/{id} {
+      allow read: if false;
+      allow create: if isVerifiedResponder()
+        && request.resource.data.keys().hasOnly(['reporterId', 'requestId', 'reason', 'createdAt'])
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.requestId is string
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 200
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
     // ---------- notifications ----------
     match /notifications/{uid}/items/{id} {
       allow read, delete: if isSelf(uid);

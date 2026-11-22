@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../akay_backend.dart';
 import '../create_account_screens.dart'; // fieldDecoration, FieldLabel, showComingSoon
 import '../main.dart';
 import 'screen_widgets.dart';
@@ -8,8 +11,9 @@ import 'screen_widgets.dart';
 // AKAY - Evacuation-center check-in (wireframe 12)
 // A responder confirms a household arrived, which closes the rescue record.
 //
-// UI only. TODO(backend): look up the household by ID or QR and save the
-// check-in (queue it when offline). The numbers below are sample data.
+// Backend used: AkayBackend.checkInHousehold(...)
+// Privacy: a responder cannot look up other households (rules block it), so
+// the responder types the household name/ID and how many people arrived.
 // ============================================================
 class CheckInScreen extends StatefulWidget {
   const CheckInScreen({super.key});
@@ -20,24 +24,44 @@ class CheckInScreen extends StatefulWidget {
 
 class _CheckInScreenState extends State<CheckInScreen> {
   final _idController = TextEditingController();
+  final _countController = TextEditingController(text: '1');
   bool _allArrived = false;
+  bool _busy = false;
 
   @override
   void dispose() {
     _idController.dispose();
+    _countController.dispose();
     super.dispose();
   }
 
   // The button only works when a household is entered AND the box is ticked.
-  bool get _canSubmit => _idController.text.trim().isNotEmpty && _allArrived;
+  int get _count => int.tryParse(_countController.text.trim()) ?? 0;
 
-  void _submit() {
-    // TODO(backend): save the check-in. If offline, mark it "Waiting to sync".
-    showComingSoon(
-      context,
-      'Check-in saved on this phone. Waiting to sync. (Not sent to the server yet.)',
-    );
-    Navigator.of(context).maybePop();
+  bool get _canSubmit =>
+      _idController.text.trim().isNotEmpty &&
+      _count >= 1 && _count <= 50 &&
+      _allArrived;
+
+  Future<void> _submit() async {
+    setState(() => _busy = true);
+    try {
+      await AkayBackend.checkInHousehold(
+        household: _idController.text,
+        membersPresent: _count,
+      ).timeout(const Duration(seconds: 4));
+      if (!mounted) return;
+      showComingSoon(context, 'Check-in saved. Household marked evacuated.');
+    } on TimeoutException {
+      if (!mounted) return;
+      showComingSoon(context, 'No connection. Check-in saved on this phone. Waiting to sync.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showComingSoon(context, AkayBackend.friendlyError(e));
+      return;
+    }
+    if (mounted) Navigator.of(context).maybePop();
   }
 
   @override
@@ -68,25 +92,12 @@ class _CheckInScreenState extends State<CheckInScreen> {
           ),
           const SizedBox(height: 16),
 
-          // sample details of the household found
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: kBorder),
-            ),
-            child: const Column(
-              children: [
-                DetailRow(label: 'Members expected', value: '4 people'),
-                Divider(height: 1, color: kBorder),
-                DetailRow(label: 'Members present', value: '4 people'),
-                Divider(height: 1, color: kBorder),
-                DetailRow(label: 'Center', value: 'Lumbo Elementary'),
-                Divider(height: 1, color: kBorder),
-                DetailRow(label: 'Current status', value: 'In transit'),
-              ],
-            ),
+          const FieldLabel('Members present'),
+          TextField(
+            controller: _countController,
+            keyboardType: TextInputType.number,
+            onChanged: (_) => setState(() {}),
+            decoration: fieldDecoration('e.g. 4'),
           ),
           const SizedBox(height: 12),
 
@@ -104,7 +115,8 @@ class _CheckInScreenState extends State<CheckInScreen> {
           const SizedBox(height: 8),
           SolidAction(
             label: 'Mark household evacuated',
-            onPressed: _canSubmit ? _submit : null,
+            loading: _busy,
+            onPressed: _canSubmit && !_busy ? _submit : null,
           ),
           const SizedBox(height: 12),
           const StatusBanner(

@@ -491,11 +491,74 @@ class AkayBackend {
   }
 
   /// Responder: live list of requests waiting for help (newest first). Each item has an 'id'.
+  /// Requests this responder declined are hidden.
   static Stream<List<Map<String, dynamic>>> pendingRequests() => _db
       .collection('requests')
       .where('status', isEqualTo: 'pending')
       .snapshots()
-      .map(_sorted);
+      .asyncMap((snap) async {
+        final declined = await _declinedIds();
+        return _sorted(snap).where((r) => !declined.contains(r['id'])).toList();
+      });
+
+  static Future<Set<String>> _declinedIds() async {
+    try {
+      final s = await _db.collection('responderDeclines/$uid/items').get();
+      return s.docs.map((d) => d.id).toSet();
+    } catch (_) {
+      return {}; // offline or not allowed: just show everything
+    }
+  }
+
+  /// Responder: "Decline - show next responder". Hides this request from MY list only.
+  static Future<void> declineRequest(String requestId) =>
+      _db.doc('responderDeclines/$uid/items/$requestId').set({
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+  /// Responder: "Report suspicious ping". Admins read the `reports` collection in the console.
+  static Future<void> reportRequest(String requestId, {String? reason}) =>
+      _db.collection('reports').add({
+        'reporterId': uid,
+        'requestId': requestId,
+        'reason': (reason ?? 'Suspicious ping').trim(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+  /// Responder: evacuation-center check-in (wireframe 12).
+  /// Works offline: Firestore keeps the write on the phone and sends it later.
+  /// We do NOT await it for that reason; use [hasPendingWrites] to show "Waiting to sync".
+  static Future<void> checkInHousehold({
+    required String household,
+    required int membersPresent,
+  }) {
+    final write = _db.collection('checkIns').add({
+      'responderId': uid,
+      'household': household.trim(),
+      'membersPresent': membersPresent,
+      'allConfirmed': true,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+    return write;
+  }
+
+  // ---------- resident: evacuation status (wireframe 08) ----------
+
+  /// 'home' | 'transit' | 'evacuated'
+  static Future<void> setEvacuationStatus(String status) =>
+      _db.doc('evacuationStatus/$uid').set({
+        'status': status,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+  static Stream<DocumentSnapshot<Map<String, dynamic>>> myEvacuationStatus() =>
+      _db.doc('evacuationStatus/$uid').snapshots();
+
+  /// True while a write is still only on this phone (drives "Waiting to sync").
+  static Stream<bool> hasPendingWrites() => _db
+      .doc('evacuationStatus/$uid')
+      .snapshots(includeMetadataChanges: true)
+      .map((s) => s.metadata.hasPendingWrites);
 
   /// Responder: requests I accepted.
   static Stream<List<Map<String, dynamic>>> myAcceptedRequests() => _db

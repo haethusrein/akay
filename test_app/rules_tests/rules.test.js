@@ -790,3 +790,65 @@ describe('signed out access', () => {
     await assertFails(getDoc(doc(anon(), 'verificationCodes', 'ABCD2345EFGH6789')));
   });
 });
+
+// ---------------------------------------------------------------
+describe('evacuation status, check-in, declines, reports', () => {
+  it('a user can set and read only their own evacuation status', async () => {
+    await assertSucceeds(
+      setDoc(doc(as('res1'), 'evacuationStatus', 'res1'), { status: 'transit', updatedAt: serverTimestamp() }),
+    );
+    await assertSucceeds(getDoc(doc(as('res1'), 'evacuationStatus', 'res1')));
+    await assertFails(getDoc(doc(as('res2'), 'evacuationStatus', 'res1')));
+    await assertFails(
+      setDoc(doc(as('res2'), 'evacuationStatus', 'res1'), { status: 'home', updatedAt: serverTimestamp() }),
+    );
+  });
+
+  it('evacuation status rejects unknown values and extra fields', async () => {
+    await assertFails(
+      setDoc(doc(as('res1'), 'evacuationStatus', 'res1'), { status: 'teleported', updatedAt: serverTimestamp() }),
+    );
+    await assertFails(
+      setDoc(doc(as('res1'), 'evacuationStatus', 'res1'), { status: 'home', updatedAt: serverTimestamp(), x: 1 }),
+    );
+  });
+
+  const checkIn = (o = {}) => ({
+    responderId: 'resp1',
+    household: 'AKAY-HH-042 Santos',
+    membersPresent: 4,
+    allConfirmed: true,
+    createdAt: serverTimestamp(),
+    ...o,
+  });
+
+  it('a verified responder can check a household in', async () => {
+    await assertSucceeds(setDoc(doc(collection(as('resp1'), 'checkIns')), checkIn()));
+  });
+
+  it('residents, unverified responders and forged responderId cannot check in', async () => {
+    await assertFails(setDoc(doc(collection(as('res1'), 'checkIns')), checkIn({ responderId: 'res1' })));
+    await assertFails(setDoc(doc(collection(as('unvResp'), 'checkIns')), checkIn({ responderId: 'unvResp' })));
+    await assertFails(setDoc(doc(collection(as('resp1'), 'checkIns')), checkIn({ responderId: 'resp2' })));
+    await assertFails(setDoc(doc(collection(as('resp1'), 'checkIns')), checkIn({ membersPresent: 0 })));
+    await assertFails(setDoc(doc(collection(as('resp1'), 'checkIns')), checkIn({ allConfirmed: false })));
+  });
+
+  it('a responder can decline for themselves only', async () => {
+    await assertSucceeds(
+      setDoc(doc(as('resp1'), 'responderDeclines', 'resp1', 'items', 'req1'), { createdAt: serverTimestamp() }),
+    );
+    await assertSucceeds(getDocs(collection(as('resp1'), 'responderDeclines', 'resp1', 'items')));
+    await assertFails(
+      setDoc(doc(as('resp1'), 'responderDeclines', 'resp2', 'items', 'req1'), { createdAt: serverTimestamp() }),
+    );
+    await assertFails(getDocs(collection(as('resp2'), 'responderDeclines', 'resp1', 'items')));
+  });
+
+  it('a verified responder can report a ping but nobody can read reports', async () => {
+    const rep = { reporterId: 'resp1', requestId: 'req1', reason: 'Suspicious ping', createdAt: serverTimestamp() };
+    await assertSucceeds(setDoc(doc(collection(as('resp1'), 'reports')), rep));
+    await assertFails(setDoc(doc(collection(as('res1'), 'reports')), { ...rep, reporterId: 'res1' }));
+    await assertFails(getDocs(collection(as('resp1'), 'reports')));
+  });
+});
