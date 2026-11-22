@@ -5,8 +5,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'create_account_screens.dart';
 import 'akay_backend.dart';
 import 'firebase_options.dart';
-import 'notifications_screen.dart';
-import 'main_shell.dart';
+import 'screens/akay_nav.dart';
+import 'screens/request_help_sheet.dart';
 
 // ============================================================
 // AKAY - Home screen
@@ -66,7 +66,7 @@ class AkayApp extends StatelessWidget {
           }
 
           if (snapshot.hasData) {
-            return const MainShell();
+              return const HomeScreen();
           }
 
           return const WelcomeScreen();
@@ -83,135 +83,28 @@ class AkayApp extends StatelessWidget {
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
-  @override
+   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              buildHeader(context),
-              const SizedBox(height: 16),
-              buildConnectedBanner(),
-              const SizedBox(height: 16),
-              buildEmergencyCard(context),
-              const SizedBox(height: 28),
-              buildHouseholdSection(),
-              const SizedBox(height: 28),
-              buildUpdatesSection(),
-              const SizedBox(height: 20),
-              buildCommunityStatus(),
-              const SizedBox(height: 16),
-              buildHotlineCard(),
-              const SizedBox(height: 16),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ---------- Header ----------
-
-  Widget buildHeader(BuildContext context) {
-    return Row(
-      children: [
-        const IconBox(
-          icon: Icons.shield_outlined,
-          bg: kGreen,
-          color: Colors.white,
-          size: 40,
-        ),
-        const SizedBox(width: 10),
-        const Text(
-          'AKAY',
-          style: TextStyle(
-            fontSize: 18,
-            letterSpacing: 2,
-            fontWeight: FontWeight.w600,
-            color: kTextDark,
-          ),
-        ),
-        const Spacer(),
-        GestureDetector(
-          onTap: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-            );
-          },
-          child: StreamBuilder<int>(
-            stream: AkayBackend.unreadCount(),
-            builder: (context, snapshot) {
-              final count = snapshot.data ?? 0;
-
-              return Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  const IconBox(icon: Icons.notifications_none, size: 40),
-                  if (count > 0)
-                    Positioned(
-                      right: -3,
-                      top: -3,
-                      child: Container(
-                        padding: const EdgeInsets.all(4),
-                        decoration: const BoxDecoration(
-                          color: kRed,
-                          shape: BoxShape.circle,
-                        ),
-                        constraints: const BoxConstraints(
-                          minWidth: 18,
-                          minHeight: 18,
-                        ),
-                        child: Text(
-                          count > 9 ? '9+' : '$count',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              );
-            },
-          ),
-        ),
-        const SizedBox(width: 8),
-        const IconBox(icon: Icons.menu, size: 40),
-      ],
-    );
-  }
-
-  // ---------- Connected banner ----------
-
-  Widget buildConnectedBanner() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: kLightGreen,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFCFE5DA)),
-      ),
-      child: const Row(
+    return TabScaffold(
+      index: 0,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.wifi, size: 16, color: kGreen),
-          SizedBox(width: 8),
-          Text(
-            'Connected',
-            style: TextStyle(fontWeight: FontWeight.w600, color: kGreen),
-          ),
-          SizedBox(width: 12),
-          Text('Emergency network active', style: kGreyText),
+          buildEmergencyCard(context),
+          const SizedBox(height: 28),
+          buildHouseholdSection(),
+          const SizedBox(height: 28),
+          buildUpdatesSection(),
+          const SizedBox(height: 20),
+          buildCommunityStatus(),
+          const SizedBox(height: 16),
+          buildHotlineCard(),
+          const SizedBox(height: 16),
         ],
       ),
     );
   }
-
-  // ---------- Emergency assistance ----------
+  }
 
   Widget buildEmergencyCard(BuildContext context) {
     return Container(
@@ -245,66 +138,7 @@ class HomeScreen extends StatelessWidget {
             width: double.infinity,
             height: 56,
             child: ElevatedButton.icon(
-              onPressed: () async {
-                final type = await showModalBottomSheet<String>(
-                  context: context,
-                  builder: (ctx) => SafeArea(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Text(
-                            "What's happening?",
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        ListTile(
-                          leading: const Icon(Icons.water_drop),
-                          title: const Text('Flood'),
-                          onTap: () => Navigator.pop(ctx, 'flood'),
-                        ),
-                        ListTile(
-                          leading: const Icon(Icons.medical_services),
-                          title: const Text('Medical emergency'),
-                          onTap: () => Navigator.pop(ctx, 'medical'),
-                        ),
-                        ListTile(
-                          leading: const Icon(Icons.local_fire_department),
-                          title: const Text('Fire'),
-                          onTap: () => Navigator.pop(ctx, 'fire'),
-                        ),
-                        ListTile(
-                          leading: const Icon(Icons.help_outline),
-                          title: const Text('Other'),
-                          onTap: () => Navigator.pop(ctx, 'other'),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                    ),
-                  ),
-                );
-
-                if (type == null) return;
-
-                try {
-                  await AkayBackend.sendRequest(type: type);
-
-                  if (context.mounted) {
-                    showComingSoon(
-                      context,
-                      'Help request sent. Finding a verified responder...',
-                    );
-                  }
-                } catch (e) {
-                  if (context.mounted) {
-                    showComingSoon(context, AkayBackend.friendlyError(e));
-                  }
-                }
-              },
+                            onPressed: () => showRequestHelpSheet(context),
               icon: const Icon(Icons.warning_amber_rounded),
               label: const Text(
                 'Request help now',
@@ -610,7 +444,6 @@ class HomeScreen extends StatelessWidget {
       ),
     );
   }
-}
 
 // ============================================================
 // LIVE COMMUNITY STATUS CARD

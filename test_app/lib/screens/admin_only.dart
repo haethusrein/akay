@@ -1,6 +1,9 @@
 // admin tab for various back-end functions
 // accessible only to one admin account (admin, 00000000)
 // for verification, one-time pin generation, and logging exception errors
+// on new account creation, backend should generate a one-time pin and send it to the admin for verification
+// special one-time pin for demonstration purposes
+// this screen is not intended for production use, but for demonstration and testing purposes only
 
 import 'dart:math';
 import 'package:flutter/material.dart';

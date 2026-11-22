@@ -5,9 +5,8 @@ import 'dart:math' show min;
 import 'akay_backend.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'sign_in_screen.dart';
+import 'screens/sign_in_screen.dart';
 import 'main.dart';
-import 'main_shell.dart';
 
 // ---------- Extra colors used only by these screens ----------
 const kAmber = Color(0xFFF4C152);
@@ -472,7 +471,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
       await AkayBackend.verifyCode(_controller.text);
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const MainShell()),
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
         (route) => false,
       );
     } catch (e) {

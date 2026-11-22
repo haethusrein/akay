@@ -49,6 +49,19 @@ class _TrackResponseScreenState extends State<TrackResponseScreen> {
     if (!sure || !mounted) return;
     await _run(() => AkayBackend.resolveRequest(widget.requestId));
   }
+    Future<void> _reopen() async {
+    final sure = await confirmDialog(
+      context,
+      title: 'Re-open this request?',
+      message:
+          'This frees the current responder and sends your request to other verified responders. '
+          'It is available 15 minutes after a responder accepts.',
+      confirmLabel: 'Re-open',
+      cancelLabel: 'Keep waiting',
+    );
+    if (!sure || !mounted) return;
+    await _run(() => AkayBackend.reopenRequest(widget.requestId));
+  }
 
   Future<void> _run(Future<void> Function() action) async {
     setState(() => _busy = true);
@@ -183,6 +196,12 @@ class _TrackResponseScreenState extends State<TrackResponseScreen> {
                     label: 'Mark as resolved',
                     icon: Icons.check,
                     onPressed: _busy ? null : _resolve,
+                  ),
+                  const SizedBox(height: 12),
+                  OutlineAction(
+                    label: 'Responder not arriving? Re-open',
+                    icon: Icons.refresh,
+                    onPressed: _busy ? null : _reopen,
                   ),
                 ],
                 TextLinkButton(
