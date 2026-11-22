@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../akay_backend.dart';
 import '../create_account_screens.dart'; // showComingSoon
 import '../main.dart';
 import 'screen_widgets.dart';
@@ -8,8 +11,8 @@ import 'screen_widgets.dart';
 // AKAY - Update evacuation status (wireframe 08)
 // "Where is your household now?"  Still here / In transit / Evacuated
 //
-// UI only. TODO(backend): save the chosen status to the household
-// (and queue it for sync when offline). There is no backend method yet.
+// Backend used: AkayBackend.setEvacuationStatus(...)
+// Offline: Firestore keeps the write on the phone and sends it when online.
 // ============================================================
 class EvacuationStatusScreen extends StatefulWidget {
   const EvacuationStatusScreen({super.key});
@@ -27,14 +30,29 @@ const _options = [
 
 class _EvacuationStatusScreenState extends State<EvacuationStatusScreen> {
   int _selected = 0;
+  bool _busy = false;
 
-  void _confirm() {
-    // TODO(backend): save _options[_selected].$1 as the household's status.
-    showComingSoon(
-      context,
-      'Status set to "${_options[_selected].$1}". (Not saved to the server yet.)',
-    );
-    Navigator.of(context).maybePop();
+  // what we store in Firestore for each option above (same order)
+  static const _codes = ['home', 'transit', 'evacuated'];
+
+  Future<void> _confirm() async {
+    setState(() => _busy = true);
+    try {
+      // Not awaited forever: offline, Firestore queues it and this would hang.
+      await AkayBackend.setEvacuationStatus(_codes[_selected])
+          .timeout(const Duration(seconds: 4));
+      if (!mounted) return;
+      showComingSoon(context, 'Status set to "${_options[_selected].$1}".');
+    } on TimeoutException {
+      if (!mounted) return;
+      showComingSoon(context, 'No connection. Saved on this phone. Waiting to sync.');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showComingSoon(context, AkayBackend.friendlyError(e));
+      return;
+    }
+    if (mounted) Navigator.of(context).maybePop();
   }
 
   @override
@@ -111,6 +129,7 @@ class _EvacuationStatusScreenState extends State<EvacuationStatusScreen> {
           const SizedBox(height: 20),
           SolidAction(
             label: 'Confirm "${_options[_selected].$1}"',
+            loading: _busy,
             onPressed: _confirm,
           ),
           const SizedBox(height: 12),
