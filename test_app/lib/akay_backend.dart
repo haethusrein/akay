@@ -286,64 +286,80 @@ class AkayBackend {
   /// Requester cancels.
     /// Requester cancels.
   static Future<void> cancelRequest(String id) async {
+    final me = uid!;
     final ref = _db.doc('requests/$id');
-    final r = (await ref.get()).data();
-    if (r == null) throw 'Request not found.';
-    final batch = _db.batch();
-    batch.delete(_db.doc('activeRequests/${r['userId']}'));
-    if (r['responderId'] != null) {
-      batch.delete(_db.doc('responderActive/${r['responderId']}'));
-    }
-    batch.update(ref, {
-      'status': 'cancelled',
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-    if (r['status'] == 'pending') batch.delete(_db.doc('publicMarkers/$id'));
-    batch.set(
-      _notifsOf(uid!).doc(),
-      _notif('request_cancelled', 'Request cancelled', requestId: id),
-    );
-    if (r['responderId'] != null) {
-      batch.set(
-        _notifsOf(r['responderId']).doc(),
-        _notif('request_cancelled', 'Request was cancelled', requestId: id),
+    await _db.runTransaction((transaction) async {
+      final snapshot = await transaction.get(ref);
+      final r = snapshot.data();
+      if (r == null) throw 'Request not found.';
+      if (r['userId'] != me) throw 'You can only cancel your own request.';
+      if (r['status'] != 'pending' && r['status'] != 'matched') {
+        throw 'This request can no longer be cancelled.';
+      }
+      final requesterId = r['userId'] as String;
+      final responderId = r['responderId'] as String?;
+      // All reads are complete before any transaction writes.
+      transaction.delete(_db.doc('activeRequests/$requesterId'));
+      if (responderId != null) {
+        transaction.delete(_db.doc('responderActive/$responderId'));
+      }
+      transaction.update(ref, {
+        'status': 'cancelled',
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      if (r['status'] == 'pending') {
+        transaction.delete(_db.doc('publicMarkers/$id'));
+      }
+      transaction.set(
+        _notifsOf(me).doc(),
+        _notif('request_cancelled', 'Request cancelled', requestId: id),
       );
-    }
-    await batch.commit();
+      if (responderId != null) {
+        transaction.set(
+          _notifsOf(responderId).doc(),
+          _notif('request_cancelled', 'Request was cancelled', requestId: id),
+        );
+      }
+    });
   }
 
-  /// Verified responder accepts. If two try at once, the second fails (rules only allow pending -> matched).
-    /// Verified responder accepts. If two try at once, the second fails (rules only allow pending -> matched).
-  /// A responder can hold one active job at a time.
   static Future<void> acceptRequest(String id) async {
+    final me = uid!;
     final ref = _db.doc('requests/$id');
-    final r = (await ref.get()).data();
-    if (r == null || r['status'] != 'pending') {
-      throw 'Request already taken or unavailable.';
-    }
-    final me = await _db.doc('users/$uid').get();
-
-    final batch = _db.batch();
-    batch.update(ref, {
-      'status': 'matched',
-      'responderId': uid,
-      'responderMobile': me.data()?['mobile'],
-      'matchedAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-    batch.set(_db.doc('responderActive/$uid'), {'requestId': id});
-    batch.delete(_db.doc('publicMarkers/$id'));
-    batch.set(
-      _notifsOf(r['userId']).doc(),
-      _notif(
-        'request_matched',
-        'A responder is on the way',
-        body: 'A verified responder accepted your request.',
-        requestId: id,
-      ),
-    );
     try {
-      await batch.commit();
+      await _db.runTransaction((transaction) async {
+        final requestSnapshot = await transaction.get(ref);
+        final r = requestSnapshot.data();
+        if (r == null || r['status'] != 'pending') {
+          throw 'Request already taken or unavailable.';
+        }
+        if (r['userId'] == me) throw 'You cannot accept your own request.';
+        final profileSnapshot = await transaction.get(_db.doc('users/$me'));
+        final mobile = profileSnapshot.data()?['mobile'] as String?;
+        if (mobile == null || mobile.isEmpty) {
+          throw 'Your account is missing a mobile number.';
+        }
+        final requesterId = r['userId'] as String;
+        // All reads are complete before any transaction writes.
+        transaction.update(ref, {
+          'status': 'matched',
+          'responderId': me,
+          'responderMobile': mobile,
+          'matchedAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        transaction.set(_db.doc('responderActive/$me'), {'requestId': id});
+        transaction.delete(_db.doc('publicMarkers/$id'));
+        transaction.set(
+          _notifsOf(requesterId).doc(),
+          _notif(
+            'request_matched',
+            'A responder is on the way',
+            body: 'A verified responder accepted your request.',
+            requestId: id,
+          ),
+        );
+      });
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied') {
         throw 'Could not accept. It may already be taken, or you already have an active job.';
@@ -352,36 +368,45 @@ class AkayBackend {
     }
   }
 
-  /// Requester or the assigned responder marks it resolved.
-    /// Requester or the assigned responder marks it resolved.
   static Future<void> resolveRequest(String id) async {
+    final me = uid!;
     final ref = _db.doc('requests/$id');
-    final r = (await ref.get()).data();
-    if (r == null) throw 'Request not found.';
-    final other = (r['userId'] == uid) ? r['responderId'] : r['userId'];
-    final batch = _db.batch();
-    batch.delete(_db.doc('activeRequests/${r['userId']}'));
-    if (r['responderId'] != null) {
-      batch.delete(_db.doc('responderActive/${r['responderId']}'));
-    }
-    batch.update(ref, {
-      'status': 'resolved',
-      'resolvedAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-    batch.set(
-      _notifsOf(uid!).doc(),
-      _notif('request_resolved', 'Request resolved', requestId: id),
-    );
-    if (other != null) {
-      batch.set(
-        _notifsOf(other).doc(),
+    await _db.runTransaction((transaction) async {
+      final snapshot = await transaction.get(ref);
+      final r = snapshot.data();
+      if (r == null) throw 'Request not found.';
+      if (r['status'] != 'matched') {
+        throw 'Only a matched request can be resolved.';
+      }
+      final requesterId = r['userId'] as String;
+      final responderId = r['responderId'] as String?;
+      if (me != requesterId && me != responderId) {
+        throw 'You are not part of this request.';
+      }
+      final otherId = me == requesterId ? responderId : requesterId;
+      // All reads are complete before any transaction writes.
+      transaction.delete(_db.doc('activeRequests/$requesterId'));
+      if (responderId != null) {
+        transaction.delete(_db.doc('responderActive/$responderId'));
+      }
+      transaction.update(ref, {
+        'status': 'resolved',
+        'resolvedAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(
+        _notifsOf(me).doc(),
         _notif('request_resolved', 'Request resolved', requestId: id),
       );
-    }
-    await batch.commit();
+      if (otherId != null) {
+        transaction.set(
+          _notifsOf(otherId).doc(),
+          _notif('request_resolved', 'Request resolved', requestId: id),
+        );
+      }
+    });
   }
-    /// Assigned responder hands the request back so another responder can take it.
+
   static Future<void> releaseRequest(String id) async {
     final ref = _db.doc('requests/$id');
     final r = (await ref.get()).data();

@@ -3,6 +3,9 @@
 # fails the check, so a bad rules change cannot be merged unnoticed.
 name: Firestore rules tests
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -10,13 +13,13 @@ on:
       - 'test_app/firestore.rules'
       - 'test_app/firebase.json'
       - 'test_app/rules_tests/**'
-      - '.github/workflows/rules-tests.yml'
+      - '.github/workflows/rules-test.yml'
   pull_request:
     paths:
       - 'test_app/firestore.rules'
       - 'test_app/firebase.json'
       - 'test_app/rules_tests/**'
-      - '.github/workflows/rules-tests.yml'
+      - '.github/workflows/rules-test.yml'
 
 jobs:
   rules:
