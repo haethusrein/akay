@@ -1,0 +1,50 @@
+# AK-10: run the Firestore rules tests on every change to the rules or the tests.
+# A failing test (an attack case that succeeds, or a legitimate flow that is blocked)
+# fails the check, so a bad rules change cannot be merged unnoticed.
+name: Firestore rules tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'test_app/firestore.rules'
+      - 'test_app/firebase.json'
+      - 'test_app/rules_tests/**'
+      - '.github/workflows/rules-tests.yml'
+  pull_request:
+    paths:
+      - 'test_app/firestore.rules'
+      - 'test_app/firebase.json'
+      - 'test_app/rules_tests/**'
+      - '.github/workflows/rules-tests.yml'
+
+jobs:
+  rules:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: test_app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: test_app/rules_tests/package-lock.json
+
+      # The Firestore emulator needs Java.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install test dependencies
+        run: npm ci --prefix rules_tests
+
+      - name: Install the Firebase CLI
+        run: npm install -g firebase-tools
+
+      # "demo-" project ids never touch a real Firebase project.
+      - name: Run the rules tests in the Firestore emulator
+        run: firebase emulators:exec --only firestore --project demo-akay "npm --prefix rules_tests test"

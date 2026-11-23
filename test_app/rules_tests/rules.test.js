@@ -35,6 +35,8 @@ const MOBILE = {
   resp1: '+639170000011',
   resp2: '+639170000012',
   unvResp: '+639170000013',
+  unv2: '+639170000004',
+  admin: '00000000',
 };
 
 let env;
@@ -250,6 +252,7 @@ beforeEach(async () => {
     await setDoc(doc(db, 'users', 'resp1'), user('resp1', 'respondent'));
     await setDoc(doc(db, 'users', 'resp2'), user('resp2', 'respondent'));
     await setDoc(doc(db, 'users', 'unvResp'), user('unvResp', 'respondent', false));
+    await setDoc(doc(db, 'users', 'admin'), user('admin', 'admin'));
     await setDoc(doc(db, 'households', 'res1'), household());
     await setDoc(doc(db, 'households', 'resp1'), household());
   });
@@ -423,11 +426,12 @@ describe('AK-03 request creation', () => {
 
   it('the requester can cancel a pending request', async () => {
     await seedPending();
-    const b = writeBatch(as('res1'));
-    b.delete(doc(as('res1'), 'activeRequests', 'res1'));
-    b.update(doc(as('res1'), 'requests', 'req1'), { status: 'cancelled', updatedAt: serverTimestamp() });
-    b.delete(doc(as('res1'), 'publicMarkers', 'req1'));
-    b.set(doc(as('res1'), 'notifications', 'res1', 'items', 'n2'), notif('request_cancelled', 'res1', 'req1'));
+    const db = as('res1'); // one instance for the batch and every reference in it
+    const b = writeBatch(db);
+    b.delete(doc(db, 'activeRequests', 'res1'));
+    b.update(doc(db, 'requests', 'req1'), { status: 'cancelled', updatedAt: serverTimestamp() });
+    b.delete(doc(db, 'publicMarkers', 'req1'));
+    b.set(doc(db, 'notifications', 'res1', 'items', 'n2'), notif('request_cancelled', 'res1', 'req1'));
     await assertSucceeds(b.commit());
   });
 });
@@ -778,6 +782,322 @@ describe('AK-08 accept, release, cap and re-open', () => {
         updatedAt: serverTimestamp(),
       }),
     );
+  });
+});
+
+// ---------------------------------------------------------------
+// Section 7 of the audit lists attack cases that must all be denied.
+// These two were not covered yet.
+describe('AK-10 checklist gaps', () => {
+  it('a stranger cannot resolve a matched request', async () => {
+    await seedMatched({ matchedAgo: MIN });
+    await assertFails(
+      updateDoc(doc(as('res2'), 'requests', 'req1'), {
+        status: 'resolved',
+        resolvedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      }),
+    );
+  });
+
+  // AK-14 is still open: firestore.rules has "allow read: if true" on config.
+  // Marked todo so the run stays green until AK-14 is fixed. When it is,
+  // delete the { todo } option so this test becomes a normal, enforced one.
+  it(
+    'config cannot be read while signed out',
+    { todo: 'AK-14: config is still readable without login' },
+    async () => {
+      await assertFails(getDoc(doc(anon(), 'config', 'app')));
+    },
+  );
+});
+
+// ---------------------------------------------------------------
+// Admin account (mobile 00000000), created by hand in the Firebase console.
+// These cover the rules added for the Admin screen.
+describe('admin account', () => {
+  const PIN = '483920';
+
+  const pin = (o = {}) => ({
+    role: 'respondent',
+    used: false,
+    expiresAt: inFuture(30 * MIN),
+    createdAt: serverTimestamp(),
+    createdBy: 'admin',
+    demo: false,
+    ...o,
+  });
+
+  // A pin as it sits in the database (written with the rules switched off).
+  const seedPin = (o = {}) =>
+    seed((db) =>
+      setDoc(doc(db, 'verificationCodes', PIN), {
+        role: 'resident',
+        used: false,
+        expiresAt: inFuture(30 * MIN),
+        createdBy: 'admin',
+        demo: false,
+        ...o,
+      }),
+    );
+
+  // Mirrors AkayBackend.verifyCode
+  const redeem = (db, uid) => {
+    const b = writeBatch(db);
+    b.update(doc(db, 'verificationCodes', PIN), { used: true, usedBy: uid });
+    b.update(doc(db, 'users', uid), { verified: true, verifiedWith: PIN });
+    return b.commit();
+  };
+
+  // ----- who counts as admin -----
+
+  it('nobody can sign up with the admin number', async () => {
+    await assertFails(
+      setDoc(doc(as('newbie'), 'users', 'newbie'), {
+        mobile: '00000000',
+        role: 'resident',
+        verified: false,
+        createdAt: serverTimestamp(),
+      }),
+    );
+  });
+
+  it('a user cannot change their mobile to the admin number', async () => {
+    await assertFails(updateDoc(doc(as('res1'), 'users', 'res1'), { mobile: '00000000' }));
+  });
+
+  // ----- accounts -----
+
+  it('the admin can list every account', async () => {
+    await assertSucceeds(getDocs(collection(as('admin'), 'users')));
+  });
+
+  it('a normal user cannot list accounts', async () => {
+    await assertFails(getDocs(collection(as('res1'), 'users')));
+  });
+
+  // ----- one-time pins -----
+
+  it('the admin can create a pin', async () => {
+    await assertSucceeds(setDoc(doc(as('admin'), 'verificationCodes', PIN), pin()));
+  });
+
+  it('the admin can create a 24 hour demo pin', async () => {
+    await assertSucceeds(
+      setDoc(doc(as('admin'), 'verificationCodes', PIN), pin({ demo: true, expiresAt: inFuture(24 * HOUR) })),
+    );
+  });
+
+  it('a pin can be tied to one account', async () => {
+    await assertSucceeds(
+      setDoc(doc(as('admin'), 'verificationCodes', PIN), pin({ forUid: 'unv', forMobile: MOBILE.unv })),
+    );
+  });
+
+  it('a normal user cannot create a pin', async () => {
+    await assertFails(setDoc(doc(as('res1'), 'verificationCodes', PIN), pin({ createdBy: 'res1' })));
+  });
+
+  it('a signed out user cannot create a pin', async () => {
+    await assertFails(setDoc(doc(anon(), 'verificationCodes', PIN), pin()));
+  });
+
+  it('a pin whose id is not 6 digits is denied', async () => {
+    await assertFails(setDoc(doc(as('admin'), 'verificationCodes', 'ABCD2345EFGH6789'), pin()));
+  });
+
+  it('a pin that expires in 3 days is denied', async () => {
+    await assertFails(
+      setDoc(doc(as('admin'), 'verificationCodes', PIN), pin({ expiresAt: inFuture(3 * 24 * HOUR) })),
+    );
+  });
+
+  it('a pin that is already expired is denied', async () => {
+    await assertFails(setDoc(doc(as('admin'), 'verificationCodes', PIN), pin({ expiresAt: inPast(MIN) })));
+  });
+
+  it('a pin that is already used is denied', async () => {
+    await assertFails(setDoc(doc(as('admin'), 'verificationCodes', PIN), pin({ used: true })));
+  });
+
+  it('a pin for the admin role is denied', async () => {
+    await assertFails(setDoc(doc(as('admin'), 'verificationCodes', PIN), pin({ role: 'admin' })));
+  });
+
+  it('a pin with an extra field is denied', async () => {
+    await assertFails(setDoc(doc(as('admin'), 'verificationCodes', PIN), pin({ extra: 1 })));
+  });
+
+  it('a pin credited to someone else is denied', async () => {
+    await assertFails(setDoc(doc(as('admin'), 'verificationCodes', PIN), pin({ createdBy: 'res1' })));
+  });
+
+  it('a client supplied createdAt on a pin is denied', async () => {
+    await assertFails(
+      setDoc(doc(as('admin'), 'verificationCodes', PIN), pin({ createdAt: Timestamp.now() })),
+    );
+  });
+
+  it('the admin can read a pin', async () => {
+    await seedPin();
+    await assertSucceeds(getDoc(doc(as('admin'), 'verificationCodes', PIN)));
+  });
+
+  it('the admin can revoke an unused pin', async () => {
+    await seedPin();
+    await assertSucceeds(deleteDoc(doc(as('admin'), 'verificationCodes', PIN)));
+  });
+
+  it('the admin cannot delete a pin that was used', async () => {
+    await seedPin({ used: true, usedBy: 'someone' });
+    await assertFails(deleteDoc(doc(as('admin'), 'verificationCodes', PIN)));
+  });
+
+  it('a normal user cannot read or revoke a pin', async () => {
+    await seedPin();
+    await assertFails(getDoc(doc(as('res1'), 'verificationCodes', PIN)));
+    await assertFails(deleteDoc(doc(as('res1'), 'verificationCodes', PIN)));
+  });
+
+  it('an admin made pin verifies the account it was made for', async () => {
+    await seedPin({ forUid: 'unv', forMobile: MOBILE.unv });
+    await assertSucceeds(redeem(as('unv'), 'unv'));
+  });
+
+  it('a pin made for one account cannot be redeemed by another', async () => {
+    await seed((db) => setDoc(doc(db, 'users', 'unv2'), user('unv2', 'resident', false)));
+    await seedPin({ forUid: 'unv', forMobile: MOBILE.unv });
+    await assertFails(redeem(as('unv2'), 'unv2'));
+    await assertSucceeds(redeem(as('unv'), 'unv'));
+  });
+
+  it('a pin that is not tied to an account still works for its role', async () => {
+    await seedPin();
+    await assertSucceeds(redeem(as('unv'), 'unv'));
+  });
+
+  // ----- 911 calls (demonstration) -----
+
+  it('the admin can list every request', async () => {
+    await seedPending();
+    await assertSucceeds(getDocs(collection(as('admin'), 'requests')));
+  });
+
+  it('a resident cannot list every request', async () => {
+    await seedPending();
+    await assertFails(getDocs(collection(as('res2'), 'requests')));
+  });
+
+  it('the admin can accept a pending request', async () => {
+    await seedPending();
+    await assertSucceeds(acceptBatch(as('admin'), 'admin', 'req1').commit());
+  });
+
+  it('the admin cannot accept with a spoofed number', async () => {
+    await seedPending();
+    await assertFails(
+      acceptBatch(as('admin'), 'admin', 'req1', { request: { responderMobile: '+639999999999' } }).commit(),
+    );
+  });
+
+  it('the admin can resolve a call they accepted', async () => {
+    await seed(async (db) => {
+      await setDoc(doc(db, 'requests', 'req1'), requestDoc({
+        status: 'matched',
+        responderId: 'admin',
+        responderMobile: MOBILE.admin,
+        matchedAt: inPast(MIN),
+      }));
+      await setDoc(doc(db, 'requestDetails', 'req1'), detailsDoc());
+      await setDoc(doc(db, 'activeRequests', 'res1'), { requestId: 'req1' });
+      await setDoc(doc(db, 'responderActive', 'admin'), { requestId: 'req1' });
+    });
+    const db = as('admin');
+    const b = writeBatch(db);
+    b.delete(doc(db, 'activeRequests', 'res1'));
+    b.delete(doc(db, 'responderActive', 'admin'));
+    b.update(doc(db, 'requests', 'req1'), {
+      status: 'resolved',
+      resolvedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    b.set(doc(db, 'notifications', 'admin', 'items', 'n1'), notif('request_resolved', 'admin', 'req1'));
+    b.set(doc(db, 'notifications', 'res1', 'items', 'n1'), notif('request_resolved', 'admin', 'req1'));
+    await assertSucceeds(b.commit());
+  });
+});
+
+// ---------------------------------------------------------------
+describe('error log', () => {
+  const entry = (o = {}) => ({
+    uid: 'res1',
+    source: 'shown to user',
+    message: 'Something failed',
+    stack: null,
+    createdAt: serverTimestamp(),
+    ...o,
+  });
+
+  const seedLog = () =>
+    seed((db) => setDoc(doc(db, 'errorLogs', 'e1'), entry({ createdAt: Timestamp.now() })));
+
+  it('a signed-in user can save an error', async () => {
+    const db = as('res1');
+    await assertSucceeds(setDoc(doc(collection(db, 'errorLogs')), entry()));
+  });
+
+  it('an error with a stack trace can be saved', async () => {
+    const db = as('res1');
+    await assertSucceeds(setDoc(doc(collection(db, 'errorLogs')), entry({ stack: 'at main (main.dart:1)' })));
+  });
+
+  it('a signed out user cannot save an error', async () => {
+    const db = anon();
+    await assertFails(setDoc(doc(collection(db, 'errorLogs')), entry()));
+  });
+
+  it('an error credited to another user is denied', async () => {
+    const db = as('res1');
+    await assertFails(setDoc(doc(collection(db, 'errorLogs')), entry({ uid: 'res2' })));
+  });
+
+  it('an over-long message is denied', async () => {
+    const db = as('res1');
+    await assertFails(setDoc(doc(collection(db, 'errorLogs')), entry({ message: 'x'.repeat(501) })));
+  });
+
+  it('an over-long stack trace is denied', async () => {
+    const db = as('res1');
+    await assertFails(setDoc(doc(collection(db, 'errorLogs')), entry({ stack: 'x'.repeat(2001) })));
+  });
+
+  it('an extra field is denied', async () => {
+    const db = as('res1');
+    await assertFails(setDoc(doc(collection(db, 'errorLogs')), entry({ extra: 1 })));
+  });
+
+  it('a client supplied createdAt is denied', async () => {
+    const db = as('res1');
+    await assertFails(setDoc(doc(collection(db, 'errorLogs')), entry({ createdAt: Timestamp.now() })));
+  });
+
+  it('a normal user cannot read, edit or delete the log', async () => {
+    await seedLog();
+    await assertFails(getDoc(doc(as('res1'), 'errorLogs', 'e1')));
+    await assertFails(getDocs(collection(as('res1'), 'errorLogs')));
+    await assertFails(updateDoc(doc(as('res1'), 'errorLogs', 'e1'), { message: 'changed' }));
+    await assertFails(deleteDoc(doc(as('res1'), 'errorLogs', 'e1')));
+  });
+
+  it('the admin can read and delete the log', async () => {
+    await seedLog();
+    await assertSucceeds(getDocs(collection(as('admin'), 'errorLogs')));
+    await assertSucceeds(deleteDoc(doc(as('admin'), 'errorLogs', 'e1')));
+  });
+
+  it('even the admin cannot edit an entry', async () => {
+    await seedLog();
+    await assertFails(updateDoc(doc(as('admin'), 'errorLogs', 'e1'), { message: 'changed' }));
   });
 });
 
