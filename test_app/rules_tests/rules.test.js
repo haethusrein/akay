@@ -635,6 +635,10 @@ describe('AK-07 account creation', () => {
     await assertFails(setDoc(doc(as('newbie'), 'users', 'newbie'), profile({ mobile: '+6391234' })));
   });
 
+  it('a client supplied profile timestamp is denied', async () => {
+    await assertFails(setDoc(doc(as('newbie'), 'users', 'newbie'), profile({ createdAt: Timestamp.now() })));
+  });
+
   it('creating an already verified profile is denied', async () => {
     await assertFails(setDoc(doc(as('newbie'), 'users', 'newbie'), profile({ verified: true })));
   });
@@ -1170,5 +1174,60 @@ describe('evacuation status, check-in, declines, reports', () => {
     await assertSucceeds(setDoc(doc(collection(as('resp1'), 'reports')), rep));
     await assertFails(setDoc(doc(collection(as('res1'), 'reports')), { ...rep, reporterId: 'res1' }));
     await assertFails(getDocs(collection(as('resp1'), 'reports')));
+  });
+});
+
+// ---------------------------------------------------------------
+describe('AK-11 household and location field validation', () => {
+  it('a valid household with server timestamp is accepted', async () => {
+    await assertSucceeds(setDoc(doc(as('res1'), 'households', 'res1'), {
+      ...household(),
+      updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('a household with an unknown key is denied', async () => {
+    await assertFails(setDoc(doc(as('res1'), 'households', 'res1'), {
+      ...household(), extra: 'unexpected', updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('an unknown barangay or mobility value is denied', async () => {
+    await assertFails(setDoc(doc(as('res1'), 'households', 'res1'), {
+      ...household(), barangay: 'Unknown barangay', updatedAt: serverTimestamp(),
+    }));
+    await assertFails(setDoc(doc(as('res1'), 'households', 'res1'), {
+      ...household(), mobilityNeed: 'Unknown need', updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('oversized household address and notes list are denied', async () => {
+    await assertFails(setDoc(doc(as('res1'), 'households', 'res1'), {
+      ...household(), address: 'x'.repeat(201), updatedAt: serverTimestamp(),
+    }));
+    await assertFails(setDoc(doc(as('res1'), 'households', 'res1'), {
+      ...household(), notes: Array(21).fill('note'), updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('an out of Philippines household coordinate is denied', async () => {
+    await assertFails(setDoc(doc(as('res1'), 'households', 'res1'), {
+      ...household(), location: new GeoPoint(30, 124), updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('a client supplied household timestamp is denied', async () => {
+    await assertFails(setDoc(doc(as('res1'), 'households', 'res1'), {
+      ...household(), updatedAt: Timestamp.now(),
+    }));
+  });
+
+  it('request and detail coordinates outside the Philippines are denied', async () => {
+    await assertFails(sendBatch(as('res1'), 'res1', 'bad-request-location', {
+      request: { location: new GeoPoint(30, 124) },
+    }).commit());
+    await assertFails(sendBatch(as('res1'), 'res1', 'bad-detail-location', {
+      details: { location: new GeoPoint(8, 140) },
+    }).commit());
   });
 });
