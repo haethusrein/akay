@@ -1,24 +1,92 @@
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
+import java.util.Properties
+
+plugins {
+    id("com.android.application")
+    // START: FlutterFire Configuration
+    id("com.google.gms.google-services")
+    // END: FlutterFire Configuration
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    id("dev.flutter.flutter-gradle-plugin")
+}
+
+val signingProperties = Properties()
+val signingPropertiesFile = rootProject.file("key.properties")
+
+if (signingPropertiesFile.exists()) {
+    signingPropertiesFile.inputStream().use { signingProperties.load(it) }
+}
+
+val releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+
+val requiredSigningProperties = listOf(
+    "storeFile",
+    "storePassword",
+    "keyAlias",
+    "keyPassword",
+)
+
+if (releaseTaskRequested) {
+    val missingProperties = requiredSigningProperties.filter {
+        signingProperties.getProperty(it).isNullOrBlank()
+    }
+
+    if (!signingPropertiesFile.exists() || missingProperties.isNotEmpty()) {
+        throw GradleException(
+            "Release signing is not configured. Create android/key.properties " +
+                "with storeFile, storePassword, keyAlias, and keyPassword before building a release."
+        )
     }
 }
 
-val newBuildDir: Directory =
-    rootProject.layout.buildDirectory
-        .dir("../../build")
-        .get()
-rootProject.layout.buildDirectory.value(newBuildDir)
+android {
+    namespace = "com.akay.akay"
+    compileSdk = flutter.compileSdkVersion
+    ndkVersion = flutter.ndkVersion
 
-subprojects {
-    val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
-    project.layout.buildDirectory.value(newSubprojectBuildDir)
-}
-subprojects {
-    project.evaluationDependsOn(":app")
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    signingConfigs {
+        create("release") {
+            signingProperties.getProperty("storeFile")?.let { path ->
+                storeFile = rootProject.file(path)
+            }
+            storePassword = signingProperties.getProperty("storePassword", "")
+            keyAlias = signingProperties.getProperty("keyAlias", "")
+            keyPassword = signingProperties.getProperty("keyPassword", "")
+        }
+    }
+
+    defaultConfig {
+        applicationId = "com.akay.akay"
+        minSdk = flutter.minSdkVersion
+        targetSdk = flutter.targetSdkVersion
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt")
+            )
+        }
+    }
 }
 
-tasks.register<Delete>("clean") {
-    delete(rootProject.layout.buildDirectory)
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+}
+
+flutter {
+    source = "../.."
 }
