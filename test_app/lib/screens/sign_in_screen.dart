@@ -36,6 +36,8 @@ class _SignInScreenState extends State<SignInScreen> {
 
   // Accepts 09123456789, +63 912 345 6789, or 9123456789.
   String? _validateMobile(String? value) {
+    // The demonstration admin account signs in with the short number 00000000.
+    if ((value ?? '').trim() == AkayBackend.adminMobile) return null;
     var digits = (value ?? '').replaceAll(RegExp(r'\D'), '');
     if (digits.startsWith('63')) {
       digits = digits.substring(2);

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../akay_backend.dart';
 import '../create_account_screens.dart'; // WelcomeScreen, showComingSoon
 import '../main.dart';
+import 'admin_only.dart';
 import 'akay_nav.dart';
 import 'checkin_screen.dart';
 import 'emergency_info_screen.dart';
@@ -171,6 +172,21 @@ class ProfileScreen extends StatelessWidget {
                     page: CheckInScreen(),
                   ),
                 ],
+              );
+            },
+          ),
+          // Admin tools: shown only to the admin account (mobile 00000000).
+          StreamBuilder(
+            stream: AkayBackend.myProfile(),
+            builder: (context, snapshot) {
+              if (!AkayBackend.isAdminProfile(snapshot.data?.data())) {
+                return const SizedBox.shrink();
+              }
+              return const _ToolTile(
+                icon: Icons.admin_panel_settings_outlined,
+                title: 'Admin',
+                subtitle: 'Pins, accounts, 911 calls, error log',
+                page: AdminOnlyScreen(),
               );
             },
           ),

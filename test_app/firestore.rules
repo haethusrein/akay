@@ -16,6 +16,13 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
         && userData(request.auth.uid).verified == true;
     }
+    // The single admin account (admin, 00000000) is created by hand in the Firebase console.
+    // Nobody can sign up with this mobile: the users create rule only accepts +639XXXXXXXXX.
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userData(request.auth.uid).mobile == '00000000';
+    }
     function codePath(code) { return /databases/$(database)/documents/verificationCodes/$(code); }
     function reqAfter(id) { return getAfter(/databases/$(database)/documents/requests/$(id)).data; }
     function reqNow(id) { return get(/databases/$(database)/documents/requests/$(id)).data; }
@@ -23,7 +30,7 @@ service cloud.firestore {
 
     // ---------- accounts ----------
     match /users/{uid} {
-      allow read: if isSelf(uid);
+      allow read: if isSelf(uid) || isAdmin();
       // sign-up: you can only create your own profile, and never as already verified
       allow create: if isSelf(uid)
         && request.resource.data.keys().hasOnly(['mobile', 'role', 'verified', 'createdAt'])
@@ -39,15 +46,33 @@ service cloud.firestore {
         && request.resource.data.verifiedWith is string
         && get(codePath(request.resource.data.verifiedWith)).data.used == false
         && get(codePath(request.resource.data.verifiedWith)).data.role == resource.data.role
+        && (!('forUid' in get(codePath(request.resource.data.verifiedWith)).data)
+            || get(codePath(request.resource.data.verifiedWith)).data.forUid == request.auth.uid)
         && getAfter(codePath(request.resource.data.verifiedWith)).data.used == true
         && getAfter(codePath(request.resource.data.verifiedWith)).data.usedBy == request.auth.uid;
       allow delete: if false;
     }
 
-    // Codes are created by you (admin) in the Firebase console. The app cannot read them; it can only redeem one together with its own profile update.
+    // Codes are created by the admin account on the Admin screen (or by hand in the console).
+    // Other users cannot read them; they can only redeem one together with their own profile update.
     match /verificationCodes/{code} {
-      allow read: if false;
-      allow create, delete: if false;
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && code.matches('^[0-9]{6}$')
+        && request.resource.data.keys().hasOnly(['role', 'used', 'expiresAt', 'createdAt', 'createdBy', 'demo', 'forUid', 'forMobile'])
+        && request.resource.data.keys().hasAll(['role', 'used', 'expiresAt', 'createdAt', 'createdBy', 'demo'])
+        && request.resource.data.role in ['resident', 'respondent']
+        && request.resource.data.used == false
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt <= request.time + duration.value(2, 'd')
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.demo is bool
+        && (!('forUid' in request.resource.data) || request.resource.data.forUid is string)
+        && (!('forMobile' in request.resource.data) || request.resource.data.forMobile is string);
+      // the admin can revoke a pin that nobody has used yet
+      allow delete: if isAdmin() && resource.data.used == false;
       allow update: if signedIn()
         && resource.data.used == false
         && resource.data.expiresAt > request.time
@@ -90,7 +115,8 @@ service cloud.firestore {
       allow read: if signedIn() && (
         resource.data.userId == request.auth.uid ||
         resource.data.responderId == request.auth.uid ||
-        (isVerifiedResponder() && resource.data.status == 'pending')
+        (isVerifiedResponder() && resource.data.status == 'pending') ||
+        isAdmin()
       );
 
       allow create: if signedIn()
@@ -119,7 +145,7 @@ service cloud.firestore {
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']))
         // verified responder accepts (only while still pending => only one can win)
         // must use their own profile number, cannot accept their own request, and must take the one active-job slot
-        || (isVerifiedResponder()
+        || ((isVerifiedResponder() || isAdmin())
           && resource.data.status == 'pending'
           && resource.data.userId != request.auth.uid
           && request.resource.data.status == 'matched'
@@ -212,7 +238,7 @@ service cloud.firestore {
     // One pointer per responder with an accepted job; created with the accept, deleted when the job ends or is released.
     match /responderActive/{uid} {
       allow read: if false;
-      allow create: if isSelf(uid) && isVerifiedResponder()
+      allow create: if isSelf(uid) && (isVerifiedResponder() || isAdmin())
         && request.resource.data.keys().hasOnly(['requestId'])
         && request.resource.data.requestId is string
         && reqAfter(request.resource.data.requestId).responderId == request.auth.uid
@@ -236,7 +262,7 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['type', 'status', 'lat', 'lng', 'createdAt', 'expiresAt'])
         && request.resource.data.keys().hasAll(['type', 'status', 'lat', 'lng', 'createdAt', 'expiresAt'])
         && (reqAfter(id).userId == request.auth.uid
-            || (reqNow(id).responderId == request.auth.uid && isVerifiedResponder()))
+            || (reqNow(id).responderId == request.auth.uid && (isVerifiedResponder() || isAdmin())))
         && reqAfter(id).status == 'pending'
         && request.resource.data.type == reqAfter(id).type
         && request.resource.data.status == 'pending'
@@ -330,6 +356,24 @@ service cloud.firestore {
                 && request.auth.uid == reqNow(request.resource.data.requestId).responderId))
         && (uid == reqAfter(request.resource.data.requestId).userId
             || uid == reqAfter(request.resource.data.requestId).responderId);
+    }
+
+    // ---------- error log (read on the Admin screen) ----------
+    // Any signed-in user can save an error; only the admin can read or delete them.
+    match /errorLogs/{id} {
+      allow read, delete: if isAdmin();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'source', 'message', 'stack', 'createdAt'])
+        && request.resource.data.keys().hasAll(['uid', 'message', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.message is string
+        && request.resource.data.message.size() <= 500
+        && (request.resource.data.get('source', null) == null
+            || (request.resource.data.source is string && request.resource.data.source.size() <= 80))
+        && (request.resource.data.get('stack', null) == null
+            || (request.resource.data.stack is string && request.resource.data.stack.size() <= 2000))
+        && request.resource.data.createdAt == request.time;
+      allow update: if false;
     }
 
     // ---------- content you manage in the console ----------

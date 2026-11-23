@@ -3,6 +3,8 @@
 // The screens only call AkayBackend.something(); no Firebase code in the UI.
 // The security lives in firestore.rules.
 // ============================================================
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
@@ -63,6 +65,13 @@ class AkayBackend {
 
   /// Turns any error into a message you can show in a SnackBar.
     static String friendlyError(Object e) {
+    // Every error that is shown to a user is also saved for the admin (Error log tab).
+    // Plain text messages are expected ("You already have an active request."), so they are skipped.
+    if (e is! String &&
+        !(e is FirebaseException &&
+            (e.code == 'unavailable' || e.code == 'network-request-failed'))) {
+      logError(e, null, 'shown to user');
+    }
     if (e is FirebaseAuthException) {
       switch (e.code) {
         case 'email-already-in-use':
@@ -701,6 +710,183 @@ class AkayBackend {
     final batch = _db.batch();
     for (final d in snap.docs) {
       batch.update(d.reference, {'isRead': true});
+    }
+    await batch.commit();
+  }
+
+  // ============================================================
+  // ADMIN (demonstration and testing only)
+  // The admin account (admin, 00000000) is created by hand in the Firebase console.
+  // firestore.rules -> isAdmin() checks the same mobile value, so these calls fail for everyone else.
+  // ============================================================
+
+  static const String adminMobile = '00000000';
+
+  /// How long a normal pin works, and how long a demo pin works.
+  static const Duration pinLifetime = Duration(minutes: 30);
+  static const Duration demoPinLifetime = Duration(hours: 24);
+
+  static bool isAdminProfile(Map<String, dynamic>? profile) =>
+      profile != null && profile['mobile'] == adminMobile;
+
+  // ---------- admin: accounts ----------
+
+  /// Every account (newest first). Each item has 'id' (the uid), mobile, role, verified, createdAt.
+  static Stream<List<Map<String, dynamic>>> adminUsers() =>
+      _db.collection('users').snapshots().map(_sorted);
+
+  // ---------- admin: one-time pins ----------
+
+  /// Every pin (newest first). Each item has 'id' (the 6 digits), role, used, expiresAt, demo,
+  /// and forUid / forMobile when it was made for one account.
+  static Stream<List<Map<String, dynamic>>> adminPins() =>
+      _db.collection('verificationCodes').snapshots().map(_sorted);
+
+  /// Creates a one-time pin: verificationCodes/pin { role, used: false, expiresAt, ... }.
+  /// The same document is what [verifyCode] redeems.
+  /// [demo] makes a long-lived "special" pin, and [customPin] lets you choose its 6 digits.
+  static Future<String> adminCreatePin({
+    required String role,
+    String? forUid,
+    String? forMobile,
+    bool demo = false,
+    String? customPin,
+  }) async {
+    final me = uid;
+    if (me == null) throw 'Sign in first.';
+    if (role != 'resident' && role != 'respondent') {
+      throw 'Pins can only be made for residents or responders.';
+    }
+    final custom = (customPin ?? '').replaceAll(RegExp(r'\D'), '');
+    final wantsCustom = custom.isNotEmpty;
+    if (wantsCustom && custom.length != 6) throw 'A pin must be exactly 6 digits.';
+
+    final life = demo ? demoPinLifetime : pinLifetime;
+    for (var attempt = 0; attempt < 8; attempt++) {
+      final pin = wantsCustom
+          ? custom
+          : (Random.secure().nextInt(900000) + 100000).toString();
+      final ref = _db.doc('verificationCodes/$pin');
+      try {
+        if ((await ref.get()).exists) {
+          if (wantsCustom) throw 'That pin already exists. Choose another one.';
+          continue; // random pin collided with an existing one: try another
+        }
+        await ref.set({
+          'role': role,
+          'used': false,
+          'expiresAt': Timestamp.fromDate(DateTime.now().add(life)),
+          'createdAt': FieldValue.serverTimestamp(),
+          'createdBy': me,
+          'demo': demo,
+          'forUid': ?forUid,
+          'forMobile': ?forMobile,
+        });
+        return pin;
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied') {
+          throw 'Could not save the pin. Deploy the latest firestore.rules and sign in as the admin.';
+        }
+        rethrow;
+      }
+    }
+    throw 'Could not find a free pin. Try again.';
+  }
+
+  /// Pin for one new account (role and mobile are copied from the account).
+  /// [replacePins] are older unused pins of that account; they are revoked.
+  static Future<String> adminIssuePinForUser(
+    Map<String, dynamic> user, {
+    List<String> replacePins = const [],
+  }) async {
+    final pin = await adminCreatePin(
+      role: (user['role'] ?? '').toString(),
+      forUid: user['id']?.toString(),
+      forMobile: user['mobile']?.toString(),
+    );
+    for (final old in replacePins) {
+      try {
+        await adminRevokePin(old);
+      } catch (_) {
+        // an old pin that cannot be removed will simply expire
+      }
+    }
+    return pin;
+  }
+
+  /// Deletes a pin nobody has used yet.
+  static Future<void> adminRevokePin(String pin) =>
+      _db.doc('verificationCodes/$pin').delete();
+
+  // ---------- admin: error log ----------
+
+  static final Map<String, DateTime> _recentErrors = {};
+
+  static String _clip(String text, int max) =>
+      text.length <= max ? text : text.substring(0, max);
+
+  static Future<void> _writeErrorLog(
+    Object error,
+    StackTrace? stack,
+    String? source,
+  ) async {
+    await _db.collection('errorLogs').add({
+      'uid': uid,
+      'source': source,
+      'message': _clip(error.toString(), 500),
+      'stack': stack == null ? null : _clip(stack.toString(), 2000),
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Saves an exception for the admin (Admin screen -> Error log). Never throws, never waits.
+  /// The same error within one minute is saved only once.
+  static void logError(Object error, [StackTrace? stack, String? source]) {
+    try {
+      if (uid == null) return; // the rules only accept signed-in users
+      final key = '${source ?? ''}|${error.toString()}';
+      final now = DateTime.now();
+      final last = _recentErrors[key];
+      if (last != null && now.difference(last) < const Duration(minutes: 1)) {
+        return;
+      }
+      if (_recentErrors.length > 50) _recentErrors.clear();
+      _recentErrors[key] = now;
+      _writeErrorLog(error, stack, source).catchError((_) {});
+    } catch (_) {
+      // logging must never cause another error
+    }
+  }
+
+  /// "Log Test Exception": throws a real exception, catches it and saves it.
+  /// Unlike [logError] this waits, so the admin sees when saving fails.
+  static Future<void> adminLogTestException() async {
+    try {
+      throw StateError('Test exception from the admin screen');
+    } catch (e, st) {
+      await _writeErrorLog(e, st, 'admin test').timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => throw 'No internet connection. The entry will be saved when you are back online.',
+      );
+    }
+  }
+
+  /// Newest 100 entries. Each item has 'id', uid, source, message, stack, createdAt.
+  static Stream<List<Map<String, dynamic>>> adminErrorLogs() => _db
+      .collection('errorLogs')
+      .orderBy('createdAt', descending: true)
+      .limit(100)
+      .snapshots()
+      .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
+
+  static Future<void> adminDeleteErrorLog(String id) =>
+      _db.doc('errorLogs/$id').delete();
+
+  static Future<void> adminClearErrorLogs(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final batch = _db.batch();
+    for (final id in ids.take(400)) {
+      batch.delete(_db.doc('errorLogs/$id'));
     }
     await batch.commit();
   }
