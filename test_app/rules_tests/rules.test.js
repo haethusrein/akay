@@ -804,12 +804,12 @@ describe('AK-10 checklist gaps', () => {
     );
   });
 
-  // AK-14 is still open: firestore.rules has "allow read: if true" on config.
-  // Marked todo so the run stays green until AK-14 is fixed. When it is,
-  // delete the { todo } option so this test becomes a normal, enforced one.
-    it('config cannot be read while signed out', async () => {
+    // AK-14 is fixed: config now needs a signed-in user.
+  it('config cannot be read while signed out', async () => {
     await assertFails(getDoc(doc(anon(), 'config', 'app')));
   });
+});
+
 
 // ---------------------------------------------------------------
 // Admin account (mobile 00000000), created by hand in the Firebase console.
