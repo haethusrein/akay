@@ -8,6 +8,7 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
+
 import 'create_account_screens.dart' show UserRole;
 
 class AkayBackend {
@@ -64,7 +65,7 @@ class AkayBackend {
   };
 
   /// Turns any error into a message you can show in a SnackBar.
-    static String friendlyError(Object e) {
+  static String friendlyError(Object e) {
     // Every error that is shown to a user is also saved for the admin (Error log tab).
     // Plain text messages are expected ("You already have an active request."), so they are skipped.
     if (e is! String &&
@@ -127,14 +128,54 @@ class AkayBackend {
     }
   }
 
-  /// "I already have an account"
+    /// "I already have an account"
+  ///
+  /// Firebase Auth is checked first. Then the user's Firestore profile is
+  /// checked before the app treats the sign-in as successful. Older profiles
+  /// without accountStatus remain usable; profiles marked "deleted" are
+  /// immediately signed out.
   static Future<void> signIn({
     required String mobile,
     required String password,
-  }) => _auth.signInWithEmailAndPassword(
-    email: _emailFor(mobile),
-    password: password,
-  );
+  }) async {
+    final credential = await _auth.signInWithEmailAndPassword(
+      email: _emailFor(mobile),
+      password: password,
+    );
+
+    final user = credential.user;
+    if (user == null) {
+      await _auth.signOut();
+      throw 'Unable to sign in. Please try again.';
+    }
+
+    late final DocumentSnapshot<Map<String, dynamic>> profile;
+
+    try {
+      profile = await _db.doc('users/${user.uid}').get();
+    } catch (_) {
+      // Don't leave a Firebase Auth session active if the profile check fails.
+      await _auth.signOut();
+      rethrow;
+    }
+
+    if (!profile.exists || profile.data()?['accountStatus'] == 'deleted') {
+      await _auth.signOut();
+      throw 'This account has been deactivated.';
+    }
+  }
+
+  static Future<void> deactivateAccount() async {
+    final user = _auth.currentUser;
+    if (user == null) throw 'You are not signed in.';
+
+    await _db.doc('users/${user.uid}').update({
+      'accountStatus': 'deleted',
+      'deletedAt': FieldValue.serverTimestamp(),
+    });
+
+    await _auth.signOut();
+  }
 
   static Future<void> signOut() => _auth.signOut();
 
@@ -163,7 +204,7 @@ class AkayBackend {
     }, SetOptions(merge: true));
   }
 
-   /// Verify Code screen -> Verify.
+  /// Verify Code screen -> Verify.
   /// Codes are created by hand in the console: verificationCodes/<6-digit code> { role, used: false, expiresAt }
   static Future<void> verifyCode(String raw) async {
     final code = raw.replaceAll(RegExp(r'\D'), '');
@@ -190,6 +231,13 @@ class AkayBackend {
   /// Role / verified badge ("Verified" on the Home household card)
   static Stream<DocumentSnapshot<Map<String, dynamic>>> myProfile() =>
       _db.doc('users/$uid').snapshots();
+
+  static Future<bool> isRespondent() async {
+    final me = uid;
+    if (me == null) return false;
+    final snap = await _db.doc('users/$me').get();
+    return snap.data()?['role'] == 'respondent';
+  }
 
   // ---------- location ----------
 
@@ -284,82 +332,66 @@ class AkayBackend {
   }
 
   /// Requester cancels.
-    /// Requester cancels.
+  /// Requester cancels.
   static Future<void> cancelRequest(String id) async {
-    final me = uid!;
     final ref = _db.doc('requests/$id');
-    await _db.runTransaction((transaction) async {
-      final snapshot = await transaction.get(ref);
-      final r = snapshot.data();
-      if (r == null) throw 'Request not found.';
-      if (r['userId'] != me) throw 'You can only cancel your own request.';
-      if (r['status'] != 'pending' && r['status'] != 'matched') {
-        throw 'This request can no longer be cancelled.';
-      }
-      final requesterId = r['userId'] as String;
-      final responderId = r['responderId'] as String?;
-      // All reads are complete before any transaction writes.
-      transaction.delete(_db.doc('activeRequests/$requesterId'));
-      if (responderId != null) {
-        transaction.delete(_db.doc('responderActive/$responderId'));
-      }
-      transaction.update(ref, {
-        'status': 'cancelled',
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      if (r['status'] == 'pending') {
-        transaction.delete(_db.doc('publicMarkers/$id'));
-      }
-      transaction.set(
-        _notifsOf(me).doc(),
-        _notif('request_cancelled', 'Request cancelled', requestId: id),
-      );
-      if (responderId != null) {
-        transaction.set(
-          _notifsOf(responderId).doc(),
-          _notif('request_cancelled', 'Request was cancelled', requestId: id),
-        );
-      }
+    final r = (await ref.get()).data();
+    if (r == null) throw 'Request not found.';
+    final batch = _db.batch();
+    batch.delete(_db.doc('activeRequests/${r['userId']}'));
+    if (r['responderId'] != null) {
+      batch.delete(_db.doc('responderActive/${r['responderId']}'));
+    }
+    batch.update(ref, {
+      'status': 'cancelled',
+      'updatedAt': FieldValue.serverTimestamp(),
     });
+    if (r['status'] == 'pending') batch.delete(_db.doc('publicMarkers/$id'));
+    batch.set(
+      _notifsOf(uid!).doc(),
+      _notif('request_cancelled', 'Request cancelled', requestId: id),
+    );
+    if (r['responderId'] != null) {
+      batch.set(
+        _notifsOf(r['responderId']).doc(),
+        _notif('request_cancelled', 'Request was cancelled', requestId: id),
+      );
+    }
+    await batch.commit();
   }
 
+  /// Verified responder accepts. If two try at once, the second fails (rules only allow pending -> matched).
+  /// Verified responder accepts. If two try at once, the second fails (rules only allow pending -> matched).
+  /// A responder can hold one active job at a time.
   static Future<void> acceptRequest(String id) async {
-    final me = uid!;
     final ref = _db.doc('requests/$id');
+    final r = (await ref.get()).data();
+    if (r == null || r['status'] != 'pending') {
+      throw 'Request already taken or unavailable.';
+    }
+    final me = await _db.doc('users/$uid').get();
+
+    final batch = _db.batch();
+    batch.update(ref, {
+      'status': 'matched',
+      'responderId': uid,
+      'responderMobile': me.data()?['mobile'],
+      'matchedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    batch.set(_db.doc('responderActive/$uid'), {'requestId': id});
+    batch.delete(_db.doc('publicMarkers/$id'));
+    batch.set(
+      _notifsOf(r['userId']).doc(),
+      _notif(
+        'request_matched',
+        'A responder is on the way',
+        body: 'A verified responder accepted your request.',
+        requestId: id,
+      ),
+    );
     try {
-      await _db.runTransaction((transaction) async {
-        final requestSnapshot = await transaction.get(ref);
-        final r = requestSnapshot.data();
-        if (r == null || r['status'] != 'pending') {
-          throw 'Request already taken or unavailable.';
-        }
-        if (r['userId'] == me) throw 'You cannot accept your own request.';
-        final profileSnapshot = await transaction.get(_db.doc('users/$me'));
-        final mobile = profileSnapshot.data()?['mobile'] as String?;
-        if (mobile == null || mobile.isEmpty) {
-          throw 'Your account is missing a mobile number.';
-        }
-        final requesterId = r['userId'] as String;
-        // All reads are complete before any transaction writes.
-        transaction.update(ref, {
-          'status': 'matched',
-          'responderId': me,
-          'responderMobile': mobile,
-          'matchedAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        transaction.set(_db.doc('responderActive/$me'), {'requestId': id});
-        transaction.delete(_db.doc('publicMarkers/$id'));
-        transaction.set(
-          _notifsOf(requesterId).doc(),
-          _notif(
-            'request_matched',
-            'A responder is on the way',
-            body: 'A verified responder accepted your request.',
-            requestId: id,
-          ),
-        );
-      });
+      await batch.commit();
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied') {
         throw 'Could not accept. It may already be taken, or you already have an active job.';
@@ -368,45 +400,37 @@ class AkayBackend {
     }
   }
 
+  /// Requester or the assigned responder marks it resolved.
+  /// Requester or the assigned responder marks it resolved.
   static Future<void> resolveRequest(String id) async {
-    final me = uid!;
     final ref = _db.doc('requests/$id');
-    await _db.runTransaction((transaction) async {
-      final snapshot = await transaction.get(ref);
-      final r = snapshot.data();
-      if (r == null) throw 'Request not found.';
-      if (r['status'] != 'matched') {
-        throw 'Only a matched request can be resolved.';
-      }
-      final requesterId = r['userId'] as String;
-      final responderId = r['responderId'] as String?;
-      if (me != requesterId && me != responderId) {
-        throw 'You are not part of this request.';
-      }
-      final otherId = me == requesterId ? responderId : requesterId;
-      // All reads are complete before any transaction writes.
-      transaction.delete(_db.doc('activeRequests/$requesterId'));
-      if (responderId != null) {
-        transaction.delete(_db.doc('responderActive/$responderId'));
-      }
-      transaction.update(ref, {
-        'status': 'resolved',
-        'resolvedAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      transaction.set(
-        _notifsOf(me).doc(),
+    final r = (await ref.get()).data();
+    if (r == null) throw 'Request not found.';
+    final other = (r['userId'] == uid) ? r['responderId'] : r['userId'];
+    final batch = _db.batch();
+    batch.delete(_db.doc('activeRequests/${r['userId']}'));
+    if (r['responderId'] != null) {
+      batch.delete(_db.doc('responderActive/${r['responderId']}'));
+    }
+    batch.update(ref, {
+      'status': 'resolved',
+      'resolvedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    batch.set(
+      _notifsOf(uid!).doc(),
+      _notif('request_resolved', 'Request resolved', requestId: id),
+    );
+    if (other != null) {
+      batch.set(
+        _notifsOf(other).doc(),
         _notif('request_resolved', 'Request resolved', requestId: id),
       );
-      if (otherId != null) {
-        transaction.set(
-          _notifsOf(otherId).doc(),
-          _notif('request_resolved', 'Request resolved', requestId: id),
-        );
-      }
-    });
+    }
+    await batch.commit();
   }
 
+  /// Assigned responder hands the request back so another responder can take it.
   static Future<void> releaseRequest(String id) async {
     final ref = _db.doc('requests/$id');
     final r = (await ref.get()).data();
@@ -508,7 +532,42 @@ class AkayBackend {
       .map(_sorted);
 
   // ---------- responder side ----------
+  /// Returns the phone number of the responder who accepted this user's
+  /// current request, or null if there is no accepted request.
+  static Future<String?> assignedResponderPhone() async {
+    final requests = await myRequests().first;
 
+    for (final request in requests) {
+      if (request['status'] != 'matched') continue;
+
+      final phone = request['responderMobile'];
+      if (phone is String && phone.trim().isNotEmpty) {
+        return phone.trim();
+      }
+    }
+
+    return null;
+  }
+
+  /// Demo fallback number, stored in Firestore so it isn't hard-coded here.
+  ///
+  /// Document: config/emergencyContact
+  /// Field: adminPhone, stored in international format such as +639671670872
+  static Future<String> demoAdminPhone() async {
+    final document = await _db.doc('config/emergencyContact').get();
+    final value = document.data()?['adminPhone'];
+
+    if (value is! String) {
+      throw 'The demo response-desk number is not configured.';
+    }
+
+    final phone = value.trim();
+    if (!RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(phone)) {
+      throw 'The demo response-desk number is not valid.';
+    }
+
+    return phone;
+  }
   /// Responder: go online/offline (shares a coarse ~1 km position for the "Responders online" count).
   static Future<void> setOnline(bool online) async {
     final data = <String, dynamic>{
@@ -544,10 +603,9 @@ class AkayBackend {
   }
 
   /// Responder: "Decline - show next responder". Hides this request from MY list only.
-  static Future<void> declineRequest(String requestId) =>
-      _db.doc('responderDeclines/$uid/items/$requestId').set({
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+  static Future<void> declineRequest(String requestId) => _db
+      .doc('responderDeclines/$uid/items/$requestId')
+      .set({'createdAt': FieldValue.serverTimestamp()});
 
   /// Responder: "Report suspicious ping". Admins read the `reports` collection in the console.
   static Future<void> reportRequest(String requestId, {String? reason}) =>
@@ -578,11 +636,9 @@ class AkayBackend {
   // ---------- resident: evacuation status (wireframe 08) ----------
 
   /// 'home' | 'transit' | 'evacuated'
-  static Future<void> setEvacuationStatus(String status) =>
-      _db.doc('evacuationStatus/$uid').set({
-        'status': status,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+  static Future<void> setEvacuationStatus(String status) => _db
+      .doc('evacuationStatus/$uid')
+      .set({'status': status, 'updatedAt': FieldValue.serverTimestamp()});
 
   static Stream<DocumentSnapshot<Map<String, dynamic>>> myEvacuationStatus() =>
       _db.doc('evacuationStatus/$uid').snapshots();
@@ -700,18 +756,20 @@ class AkayBackend {
   static Stream<QuerySnapshot<Map<String, dynamic>>> notifications() {
     final me = uid;
     if (me == null) return const Stream.empty();
-    return _notifsOf(
-      me,
-    ).orderBy('createdAt', descending: true).limit(50).snapshots();
+    return _notifsOf(me)
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .snapshots();
   }
 
   /// Bell badge number
   static Stream<int> unreadCount() {
     final me = uid;
     if (me == null) return Stream.value(0);
-    return _notifsOf(
-      me,
-    ).where('isRead', isEqualTo: false).snapshots().map((s) => s.size);
+    return _notifsOf(me)
+        .where('isRead', isEqualTo: false)
+        .snapshots()
+        .map((s) => s.size);
   }
 
   static Future<void> markRead(String id) async {
@@ -729,9 +787,10 @@ class AkayBackend {
   static Future<void> markAllRead() async {
     final me = uid;
     if (me == null) return;
-    final snap = await _notifsOf(
-      me,
-    ).where('isRead', isEqualTo: false).limit(400).get();
+    final snap = await _notifsOf(me)
+        .where('isRead', isEqualTo: false)
+        .limit(400)
+        .get();
     final batch = _db.batch();
     for (final d in snap.docs) {
       batch.update(d.reference, {'isRead': true});
@@ -784,7 +843,9 @@ class AkayBackend {
     }
     final custom = (customPin ?? '').replaceAll(RegExp(r'\D'), '');
     final wantsCustom = custom.isNotEmpty;
-    if (wantsCustom && custom.length != 6) throw 'A pin must be exactly 6 digits.';
+    if (wantsCustom && custom.length != 6) {
+      throw 'A pin must be exactly 6 digits.';
+    }
 
     final life = demo ? demoPinLifetime : pinLifetime;
     for (var attempt = 0; attempt < 8; attempt++) {
@@ -794,7 +855,9 @@ class AkayBackend {
       final ref = _db.doc('verificationCodes/$pin');
       try {
         if ((await ref.get()).exists) {
-          if (wantsCustom) throw 'That pin already exists. Choose another one.';
+          if (wantsCustom) {
+            throw 'That pin already exists. Choose another one.';
+          }
           continue; // random pin collided with an existing one: try another
         }
         await ref.set({

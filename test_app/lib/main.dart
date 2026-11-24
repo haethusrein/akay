@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
+import 'package:url_launcher/url_launcher.dart';
 import 'create_account_screens.dart';
 import 'akay_backend.dart';
 import 'firebase_options.dart';
 import 'screens/akay_nav.dart';
 import 'screens/request_help_sheet.dart';
+import 'screens/responder_list_screen.dart';
 
 // ============================================================
 // AKAY - Home screen
@@ -66,7 +67,23 @@ class AkayApp extends StatelessWidget {
           }
 
           if (snapshot.hasData) {
-              return const HomeScreen();
+            return StreamBuilder(
+              stream: AkayBackend.myProfile(),
+              builder: (context, profileSnap) {
+                if (profileSnap.connectionState == ConnectionState.waiting) {
+                  return const Scaffold(
+                    body: Center(
+                      child: CircularProgressIndicator(color: kGreen),
+                    ),
+                  );
+                }
+                final isRespondent =
+                    profileSnap.data?.data()?['role'] == 'respondent';
+                return isRespondent
+                    ? const ResponderListScreen()
+                    : const HomeScreen();
+              },
+            );
           }
 
           return const WelcomeScreen();
@@ -83,7 +100,7 @@ class AkayApp extends StatelessWidget {
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
-   @override
+  @override
   Widget build(BuildContext context) {
     return TabScaffold(
       index: 0,
@@ -98,293 +115,289 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 20),
           buildCommunityStatus(),
           const SizedBox(height: 16),
-          buildHotlineCard(),
+          buildHotlineCard(context),
           const SizedBox(height: 16),
         ],
       ),
     );
   }
-  }
+}
 
-  Widget buildEmergencyCard(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFDF1EE),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFF6DDD8)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('EMERGENCY ASSISTANCE', style: kSmallLabel),
-          const SizedBox(height: 10),
-          const Text(
-            'Do you need help?',
-            style: TextStyle(
-              fontSize: 30,
-              fontWeight: FontWeight.w500,
-              color: kTextDark,
+Widget buildEmergencyCard(BuildContext context) {
+  return Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(
+      color: const Color(0xFFFDF1EE),
+      borderRadius: BorderRadius.circular(24),
+      border: Border.all(color: const Color(0xFFF6DDD8)),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('EMERGENCY ASSISTANCE', style: kSmallLabel),
+        const SizedBox(height: 10),
+        const Text(
+          'Do you need help?',
+          style: TextStyle(
+            fontSize: 30,
+            fontWeight: FontWeight.w500,
+            color: kTextDark,
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Send your location and household needs to nearby verified responders.',
+          style: TextStyle(fontSize: 14, color: kTextGrey, height: 1.4),
+        ),
+        const SizedBox(height: 20),
+        SizedBox(
+          width: double.infinity,
+          height: 56,
+          child: ElevatedButton.icon(
+            onPressed: () => showRequestHelpSheet(context),
+            icon: const Icon(Icons.warning_amber_rounded),
+            label: const Text(
+              'Request help now',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Send your location and household needs to nearby verified responders.',
-            style: TextStyle(fontSize: 14, color: kTextGrey, height: 1.4),
-          ),
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            height: 56,
-            child: ElevatedButton.icon(
-                            onPressed: () => showRequestHelpSheet(context),
-              icon: const Icon(Icons.warning_amber_rounded),
-              label: const Text(
-                'Request help now',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: kRed,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
               ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: kRed,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
             ),
           ),
-          const SizedBox(height: 10),
-          const Center(
-            child: Text(
-              'Only use this during an emergency',
-              style: TextStyle(fontSize: 12, color: kTextGrey),
-            ),
+        ),
+        const SizedBox(height: 10),
+        const Center(
+          child: Text(
+            'Only use this during an emergency',
+            style: TextStyle(fontSize: 12, color: kTextGrey),
           ),
-        ],
-      ),
-    );
-  }
+        ),
+      ],
+    ),
+  );
+}
 
-  // ---------- Household section ----------
+// ---------- Household section ----------
 
-  Widget buildHouseholdSection() {
-    return StreamBuilder(
-      stream: AkayBackend.myHousehold(),
-      builder: (context, householdSnapshot) {
-        if (householdSnapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+Widget buildHouseholdSection() {
+  return StreamBuilder(
+    stream: AkayBackend.myHousehold(),
+    builder: (context, householdSnapshot) {
+      if (householdSnapshot.connectionState == ConnectionState.waiting) {
+        return const Center(child: CircularProgressIndicator());
+      }
 
-        final household = householdSnapshot.data?.data();
+      final household = householdSnapshot.data?.data();
 
-        if (household == null) {
-          return const AppCard(
-            child: Text(
-              'No household profile found. Please complete your household setup.',
-            ),
-          );
-        }
-
-        return StreamBuilder(
-          stream: AkayBackend.myProfile(),
-          builder: (context, profileSnapshot) {
-            final verified = profileSnapshot.data?.data()?['verified'] == true;
-
-            final members = household['members'] ?? 0;
-            final mobilityNeed = household['mobilityNeed'] ?? 'None';
-
-            final notes = List<String>.from(household['notes'] ?? []);
-
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SectionHeader(
-                  label: 'HOUSEHOLD READINESS',
-                  title: 'Your household',
-                  actionText: 'Manage details',
-                ),
-                const SizedBox(height: 12),
-                AppCard(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const IconBox(
-                            icon: Icons.home_outlined,
-                            bg: kLightGreen,
-                            size: 46,
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  household['name'] ?? 'My Household',
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w500,
-                                    color: kTextDark,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Row(
-                                  children: [
-                                    const Icon(
-                                      Icons.location_on_outlined,
-                                      size: 14,
-                                      color: kTextGrey,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Expanded(
-                                      child: Text(
-                                        household['address'] ??
-                                            household['barangay'] ??
-                                            '',
-                                        style: kGreyText,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: verified
-                                  ? kLightGreen
-                                  : const Color(0xFFFFF3DC),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              verified ? 'Verified' : 'Unverified',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: verified
-                                    ? kGreen
-                                    : const Color(0xFFE0A030),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Divider(height: 32, color: kBorder),
-                      InfoRow(
-                        icon: Icons.people_outline,
-                        bg: const Color(0xFFE8F1FB),
-                        color: const Color(0xFF3B82C4),
-                        value: '$members',
-                        label: 'members',
-                      ),
-                      InfoRow(
-                        icon: Icons.accessible,
-                        bg: const Color(0xFFFFF3DC),
-                        color: const Color(0xFFE0A030),
-                        value: '$mobilityNeed',
-                        label: 'mobility need',
-                      ),
-                      const Divider(height: 32, color: kBorder),
-                      const Text(
-                        'Important responder notes',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: kTextGrey,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: notes.isEmpty
-                            ? [const NoteChip(text: 'No additional notes')]
-                            : notes
-                                  .map((note) => NoteChip(text: note))
-                                  .toList(),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            );
-          },
+      if (household == null) {
+        return const AppCard(
+          child: Text(
+            'No household profile found. Please complete your household setup.',
+          ),
         );
-      },
-    );
-  }
+      }
 
-  // ---------- Community updates ----------
+      return StreamBuilder(
+        stream: AkayBackend.myProfile(),
+        builder: (context, profileSnapshot) {
+          final verified = profileSnapshot.data?.data()?['verified'] == true;
 
-  Widget buildUpdatesSection() {
-    return StreamBuilder(
-      stream: AkayBackend.communityUpdates(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
+          final members = household['members'] ?? 0;
+          final mobilityNeed = household['mobilityNeed'] ?? 'None';
 
-        if (snapshot.hasError) {
-          return AppCard(
-            child: Text(AkayBackend.friendlyError(snapshot.error!)),
-          );
-        }
+          final notes = List<String>.from(household['notes'] ?? []);
 
-        final updates = snapshot.data?.docs ?? [];
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SectionHeader(
-              label: 'LATEST ACTIVITY',
-              title: 'Community updates',
-              actionText: 'View all',
-            ),
-            const SizedBox(height: 12),
-            AppCard(
-              child: updates.isEmpty
-                  ? const Text(
-                      'No community updates available yet.',
-                      style: kGreyText,
-                    )
-                  : Column(
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SectionHeader(
+                label: 'HOUSEHOLD READINESS',
+                title: 'Your household',
+                actionText: 'Manage details',
+              ),
+              const SizedBox(height: 12),
+              AppCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       children: [
-                        for (int i = 0; i < updates.length; i++) ...[
-                          UpdateRow(
-                            icon: Icons.campaign_outlined,
-                            bg: kLightGreen,
-                            color: kGreen,
-                            title:
-                                updates[i].data()['title']?.toString() ??
-                                'Community update',
-                            body: updates[i].data()['body']?.toString() ?? '',
+                        const IconBox(
+                          icon: Icons.home_outlined,
+                          bg: kLightGreen,
+                          size: 46,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                household['name'] ?? 'My Household',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w500,
+                                  color: kTextDark,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.location_on_outlined,
+                                    size: 14,
+                                    color: kTextGrey,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Expanded(
+                                    child: Text(
+                                      household['address'] ??
+                                          household['barangay'] ??
+                                          '',
+                                      style: kGreyText,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
-                          if (i != updates.length - 1)
-                            const Divider(height: 28, color: kBorder),
-                        ],
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: verified
+                                ? kLightGreen
+                                : const Color(0xFFFFF3DC),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            verified ? 'Verified' : 'Unverified',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: verified
+                                  ? kGreen
+                                  : const Color(0xFFE0A030),
+                            ),
+                          ),
+                        ),
                       ],
                     ),
-            ),
-          ],
-        );
-      },
-    );
-  }
+                    const Divider(height: 32, color: kBorder),
+                    InfoRow(
+                      icon: Icons.people_outline,
+                      bg: const Color(0xFFE8F1FB),
+                      color: const Color(0xFF3B82C4),
+                      value: '$members',
+                      label: 'members',
+                    ),
+                    InfoRow(
+                      icon: Icons.accessible,
+                      bg: const Color(0xFFFFF3DC),
+                      color: const Color(0xFFE0A030),
+                      value: '$mobilityNeed',
+                      label: 'mobility need',
+                    ),
+                    const Divider(height: 32, color: kBorder),
+                    const Text(
+                      'Important responder notes',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: kTextGrey,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: notes.isEmpty
+                          ? [const NoteChip(text: 'No additional notes')]
+                          : notes.map((note) => NoteChip(text: note)).toList(),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
 
-  // ---------- Live community status ----------
+// ---------- Community updates ----------
 
-  Widget buildCommunityStatus() {
-    return const CommunityStatusCard();
-  }
+Widget buildUpdatesSection() {
+  return StreamBuilder(
+    stream: AkayBackend.communityUpdates(),
+    builder: (context, snapshot) {
+      if (snapshot.connectionState == ConnectionState.waiting) {
+        return const Center(child: CircularProgressIndicator());
+      }
 
-  // ---------- Hotline ----------
+      if (snapshot.hasError) {
+        return AppCard(child: Text(AkayBackend.friendlyError(snapshot.error!)));
+      }
 
-  Widget buildHotlineCard() {
+      final updates = snapshot.data?.docs ?? [];
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionHeader(
+            label: 'LATEST ACTIVITY',
+            title: 'Community updates',
+            actionText: 'View all',
+          ),
+          const SizedBox(height: 12),
+          AppCard(
+            child: updates.isEmpty
+                ? const Text(
+                    'No community updates available yet.',
+                    style: kGreyText,
+                  )
+                : Column(
+                    children: [
+                      for (int i = 0; i < updates.length; i++) ...[
+                        UpdateRow(
+                          icon: Icons.campaign_outlined,
+                          bg: kLightGreen,
+                          color: kGreen,
+                          title:
+                              updates[i].data()['title']?.toString() ??
+                              'Community update',
+                          body: updates[i].data()['body']?.toString() ?? '',
+                        ),
+                        if (i != updates.length - 1)
+                          const Divider(height: 28, color: kBorder),
+                      ],
+                    ],
+                  ),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+// ---------- Live community status ----------
+
+Widget buildCommunityStatus() {
+  return const CommunityStatusCard();
+}
+
+// ---------- Hotline ----------
+
+  Widget buildHotlineCard(BuildContext context) {
     return AppCard(
       child: Column(
         children: [
@@ -402,7 +415,7 @@ class HomeScreen extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('EMERGENCY HOTLINE', style: kSmallLabel),
+                    Text('EMERGENCY CONTACT', style: kSmallLabel),
                     SizedBox(height: 6),
                     Text(
                       'Need to speak to someone?',
@@ -410,7 +423,7 @@ class HomeScreen extends StatelessWidget {
                     ),
                     SizedBox(height: 4),
                     Text(
-                      'Call the Valencia City response desk directly.',
+                      'Call your assigned responder, or the AKAY response desk.',
                       style: kGreyText,
                     ),
                   ],
@@ -423,8 +436,31 @@ class HomeScreen extends StatelessWidget {
             width: double.infinity,
             height: 46,
             child: ElevatedButton(
-              onPressed: () {
-                // TODO: Open phone dialer.
+              onPressed: () async {
+                try {
+                  final responderPhone =
+                      await AkayBackend.assignedResponderPhone();
+                  final phone =
+                      responderPhone ?? await AkayBackend.demoAdminPhone();
+
+                  final opened = await launchUrl(
+                    Uri(scheme: 'tel', path: phone),
+                  );
+
+                  if (!opened && context.mounted) {
+                    showComingSoon(
+                      context,
+                      'Could not open the phone dialer. Please try again.',
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    showComingSoon(
+                      context,
+                      AkayBackend.friendlyError(e),
+                    );
+                  }
+                }
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFFDE9E5),
@@ -435,7 +471,7 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
               child: const Text(
-                'Call 911  >',
+                'Call responder / desk  >',
                 style: TextStyle(fontWeight: FontWeight.w600),
               ),
             ),

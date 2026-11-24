@@ -5,11 +5,12 @@ import 'package:flutter/material.dart';
 import '../akay_backend.dart';
 import '../create_account_screens.dart'; // showComingSoon
 import '../main.dart';
+import 'evacuation_qr_scanner_screen.dart';
 import 'screen_widgets.dart';
 
 // ============================================================
 // AKAY - Update evacuation status (wireframe 08)
-// "Where is your household now?"  Still here / In transit / Evacuated
+// "Where is your household now?" Still here / In transit / Evacuated
 //
 // Backend used: AkayBackend.setEvacuationStatus(...)
 // Offline: Firestore keeps the write on the phone and sends it when online.
@@ -18,7 +19,8 @@ class EvacuationStatusScreen extends StatefulWidget {
   const EvacuationStatusScreen({super.key});
 
   @override
-  State<EvacuationStatusScreen> createState() => _EvacuationStatusScreenState();
+  State<EvacuationStatusScreen> createState() =>
+      _EvacuationStatusScreenState();
 }
 
 // (title, description, icon)
@@ -32,27 +34,46 @@ class _EvacuationStatusScreenState extends State<EvacuationStatusScreen> {
   int _selected = 0;
   bool _busy = false;
 
-  // what we store in Firestore for each option above (same order)
+  // What we store in Firestore for each option above (same order).
   static const _codes = ['home', 'transit', 'evacuated'];
 
   Future<void> _confirm() async {
     setState(() => _busy = true);
+
     try {
-      // Not awaited forever: offline, Firestore queues it and this would hang.
+      // Firestore can queue the write offline, so don't wait forever.
       await AkayBackend.setEvacuationStatus(_codes[_selected])
           .timeout(const Duration(seconds: 4));
+
       if (!mounted) return;
       showComingSoon(context, 'Status set to "${_options[_selected].$1}".');
     } on TimeoutException {
       if (!mounted) return;
-      showComingSoon(context, 'No connection. Saved on this phone. Waiting to sync.');
+      showComingSoon(
+        context,
+        'No connection. Saved on this phone. Waiting to sync.',
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
       showComingSoon(context, AkayBackend.friendlyError(e));
       return;
     }
+
     if (mounted) Navigator.of(context).maybePop();
+  }
+
+  Future<void> _scanEvacuationQr() async {
+    final markedEvacuated = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => const EvacuationQrScannerScreen(),
+      ),
+    );
+
+    if (!mounted || markedEvacuated != true) return;
+
+    setState(() => _selected = 2);
+    showComingSoon(context, 'Your account status is now evacuated.');
   }
 
   @override
@@ -64,7 +85,8 @@ class _EvacuationStatusScreenState extends State<EvacuationStatusScreen> {
           const ScreenTitle(
             label: 'EVACUATION STATUS',
             title: 'Where is your household now?',
-            subtitle: 'Choose carefully. Responders use this status to plan assistance.',
+            subtitle:
+                'Choose carefully. Responders use this status to plan assistance.',
           ),
           const SizedBox(height: 20),
           for (var i = 0; i < _options.length; i++)
@@ -130,7 +152,13 @@ class _EvacuationStatusScreenState extends State<EvacuationStatusScreen> {
           SolidAction(
             label: 'Confirm "${_options[_selected].$1}"',
             loading: _busy,
-            onPressed: _confirm,
+            onPressed: _busy ? null : _confirm,
+          ),
+          const SizedBox(height: 12),
+          OutlineAction(
+            label: 'Scan admin evacuation QR',
+            icon: Icons.qr_code_scanner,
+            onPressed: _busy ? null : _scanEvacuationQr,
           ),
           const SizedBox(height: 12),
           OutlineAction(
@@ -150,4 +178,3 @@ class _EvacuationStatusScreenState extends State<EvacuationStatusScreen> {
     );
   }
 }
-

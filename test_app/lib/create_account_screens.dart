@@ -1,10 +1,16 @@
+import 'screens/responder_list_screen.dart';
+
 // ============================================================
 // AKAY - Create account flow
 // ============================================================
 import 'dart:math' show min;
+
 import 'akay_backend.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+import 'screens/sign_in_screen.dart';
 import 'main.dart';
 import 'screens/sign_in_screen.dart';
 
@@ -400,7 +406,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
                   });
                 } catch (e) {
                   if (!context.mounted) return;
-                  showComingSoon(context, e.toString());
+                  showComingSoon(context, AkayBackend.friendlyError(e));
                 }
               },
             ),
@@ -490,7 +496,10 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
       await AkayBackend.verifyCode(_controller.text);
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        MaterialPageRoute(
+          builder: (_) =>
+              isResponder ? const ResponderListScreen() : const HomeScreen(),
+        ),
         (route) => false,
       );
     } catch (e) {

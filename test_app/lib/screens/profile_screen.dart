@@ -42,6 +42,34 @@ class ProfileScreen extends StatelessWidget {
     }
   }
 
+  Future<void> _deactivateAccount(BuildContext context) async {
+  final sure = await confirmDialog(
+    context,
+    title: 'Deactivate your account?',
+    message:
+        'You will be signed out and will not be able to sign in again. '
+        'Your Firebase account will remain in the project.',
+    confirmLabel: 'Deactivate',
+    cancelLabel: 'Keep account',
+  );
+
+  if (!sure || !context.mounted) return;
+
+  try {
+    await AkayBackend.deactivateAccount();
+
+    if (!context.mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+      (route) => false,
+    );
+  } catch (e) {
+    if (context.mounted) {
+      showComingSoon(context, AkayBackend.friendlyError(e));
+    }
+  }
+}
+
   void _openVerification(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const VerifyCodeScreen()),
@@ -244,6 +272,12 @@ class ProfileScreen extends StatelessWidget {
             label: 'Log out',
             icon: Icons.logout,
             onPressed: () => _logOut(context),
+          ),
+                    const SizedBox(height: 10),
+          OutlineAction(
+            label: 'Deactivate account',
+            icon: Icons.person_off_outlined,
+            onPressed: () => _deactivateAccount(context),
           ),
         ],
       ),

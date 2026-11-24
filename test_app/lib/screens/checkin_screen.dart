@@ -1,7 +1,6 @@
 import 'dart:async';
-
 import 'package:flutter/material.dart';
-
+import 'evacuation_qr_scanner_screen.dart';
 import '../akay_backend.dart';
 import '../create_account_screens.dart'; // fieldDecoration, FieldLabel, showComingSoon
 import '../main.dart';
@@ -84,13 +83,23 @@ class _CheckInScreenState extends State<CheckInScreen> {
           ),
           const SizedBox(height: 12),
           OutlineAction(
-            label: 'Scan household QR instead',
-            icon: Icons.qr_code_scanner,
-            // TODO: QR scanning needs a camera package.
-            onPressed: () =>
-                showComingSoon(context, 'QR scanning is coming soon.'),
-          ),
-          const SizedBox(height: 16),
+  label: 'Scan evacuation demo QR',
+  icon: Icons.qr_code_scanner,
+  onPressed: () async {
+    final markedEvacuated = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => const EvacuationQrScannerScreen(),
+      ),
+    );
+
+    if (!context.mounted || markedEvacuated != true) return;
+
+    showComingSoon(
+      context,
+      'Your account status is now evacuated.',
+    );
+  },
+),
 
           const FieldLabel('Members present'),
           TextField(
