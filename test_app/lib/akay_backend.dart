@@ -127,14 +127,42 @@ class AkayBackend {
     }
   }
 
-  /// "I already have an account"
+    /// "I already have an account"
+  ///
+  /// Firebase Auth is checked first. Then the user's Firestore profile is
+  /// checked before the app treats the sign-in as successful. Older profiles
+  /// without accountStatus remain usable; profiles marked "deleted" are
+  /// immediately signed out.
   static Future<void> signIn({
     required String mobile,
     required String password,
-  }) => _auth.signInWithEmailAndPassword(
-    email: _emailFor(mobile),
-    password: password,
-  );
+  }) async {
+    final credential = await _auth.signInWithEmailAndPassword(
+      email: _emailFor(mobile),
+      password: password,
+    );
+
+    final user = credential.user;
+    if (user == null) {
+      await _auth.signOut();
+      throw 'Unable to sign in. Please try again.';
+    }
+
+    late final DocumentSnapshot<Map<String, dynamic>> profile;
+
+    try {
+      profile = await _db.doc('users/${user.uid}').get();
+    } catch (_) {
+      // Don't leave a Firebase Auth session active if the profile check fails.
+      await _auth.signOut();
+      rethrow;
+    }
+
+    if (!profile.exists || profile.data()?['accountStatus'] == 'deleted') {
+      await _auth.signOut();
+      throw 'This account has been deactivated.';
+    }
+  }
 
 static Future<void> deactivateAccount() async {
   final user = _auth.currentUser;
