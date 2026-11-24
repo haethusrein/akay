@@ -23,6 +23,15 @@ class AkayBackend {
   static String? get uid => _auth.currentUser?.uid;
   static bool get isSignedIn => _auth.currentUser != null;
 
+  /// Returns whether the signed-in account has the responder role.
+  static Future<bool> isRespondent() async {
+    final me = uid;
+    if (me == null) return false;
+    final profile = await _db.doc('users/$me').get();
+    return profile.data()?['role'] == 'respondent' &&
+        profile.data()?['accountStatus'] != 'deleted';
+  }
+
   // ---------- helpers ----------
 
   // 0912 345 6789 / +63 912... / 912... -> "639123456789"
@@ -128,12 +137,7 @@ class AkayBackend {
     }
   }
 
-    /// "I already have an account"
-  ///
-  /// Firebase Auth is checked first. Then the user's Firestore profile is
-  /// checked before the app treats the sign-in as successful. Older profiles
-  /// without accountStatus remain usable; profiles marked "deleted" are
-  /// immediately signed out.
+  /// "I already have an account"
   static Future<void> signIn({
     required String mobile,
     required String password,
@@ -142,40 +146,53 @@ class AkayBackend {
       email: _emailFor(mobile),
       password: password,
     );
-
     final user = credential.user;
-    if (user == null) {
-      await _auth.signOut();
-      throw 'Unable to sign in. Please try again.';
-    }
-
-    late final DocumentSnapshot<Map<String, dynamic>> profile;
+    if (user == null) throw 'Wrong mobile number or password.';
 
     try {
-      profile = await _db.doc('users/${user.uid}').get();
+      final profile = await _db.doc('users/${user.uid}').get();
+      if (!profile.exists || profile.data()?['accountStatus'] == 'deleted') {
+        await _auth.signOut();
+        throw 'This account has been marked as deleted and cannot sign in.';
+      }
     } catch (_) {
-      // Don't leave a Firebase Auth session active if the profile check fails.
+      // If the account is deleted, sign out above and preserve that message.
+      if (_auth.currentUser == null) rethrow;
+      // A network or Firestore error must not leave the user signed in without
+      // checking the deletion flag.
       await _auth.signOut();
       rethrow;
     }
-
-    if (!profile.exists || profile.data()?['accountStatus'] == 'deleted') {
-      await _auth.signOut();
-      throw 'This account has been deactivated.';
-    }
   }
 
+  /// Soft-deletes the account profile and signs out. Firebase Auth retains the
+  /// account record; subsequent app sign-in is rejected by [signIn].
   static Future<void> deactivateAccount() async {
-    final user = _auth.currentUser;
-    if (user == null) throw 'You are not signed in.';
-
-    await _db.doc('users/${user.uid}').update({
+    final me = uid;
+    if (me == null) throw 'Sign in before deleting this account.';
+    await _db.doc('users/$me').update({
       'accountStatus': 'deleted',
       'deletedAt': FieldValue.serverTimestamp(),
     });
-
     await _auth.signOut();
   }
+
+  /// Phone number of the responder assigned to this user's active request.
+  static Future<String?> assignedResponderPhone() async {
+    final me = uid;
+    if (me == null) return null;
+    final pointer = await _db.doc('activeRequests/$me').get();
+    final requestId = pointer.data()?['requestId']?.toString();
+    if (requestId == null || requestId.isEmpty) return null;
+    final request = await _db.doc('requests/$requestId').get();
+    final data = request.data();
+    if (data == null || data['status'] != 'matched') return null;
+    final phone = data['responderMobile']?.toString().trim();
+    return phone == null || phone.isEmpty ? null : phone;
+  }
+
+  /// Safe demo fallback. This is the admin number supplied for the demo.
+  static Future<String> demoAdminPhone() async => '09671670872';
 
   static Future<void> signOut() => _auth.signOut();
 
@@ -231,13 +248,6 @@ class AkayBackend {
   /// Role / verified badge ("Verified" on the Home household card)
   static Stream<DocumentSnapshot<Map<String, dynamic>>> myProfile() =>
       _db.doc('users/$uid').snapshots();
-
-  static Future<bool> isRespondent() async {
-    final me = uid;
-    if (me == null) return false;
-    final snap = await _db.doc('users/$me').get();
-    return snap.data()?['role'] == 'respondent';
-  }
 
   // ---------- location ----------
 
@@ -532,42 +542,7 @@ class AkayBackend {
       .map(_sorted);
 
   // ---------- responder side ----------
-  /// Returns the phone number of the responder who accepted this user's
-  /// current request, or null if there is no accepted request.
-  static Future<String?> assignedResponderPhone() async {
-    final requests = await myRequests().first;
 
-    for (final request in requests) {
-      if (request['status'] != 'matched') continue;
-
-      final phone = request['responderMobile'];
-      if (phone is String && phone.trim().isNotEmpty) {
-        return phone.trim();
-      }
-    }
-
-    return null;
-  }
-
-  /// Demo fallback number, stored in Firestore so it isn't hard-coded here.
-  ///
-  /// Document: config/emergencyContact
-  /// Field: adminPhone, stored in international format such as +639671670872
-  static Future<String> demoAdminPhone() async {
-    final document = await _db.doc('config/emergencyContact').get();
-    final value = document.data()?['adminPhone'];
-
-    if (value is! String) {
-      throw 'The demo response-desk number is not configured.';
-    }
-
-    final phone = value.trim();
-    if (!RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(phone)) {
-      throw 'The demo response-desk number is not valid.';
-    }
-
-    return phone;
-  }
   /// Responder: go online/offline (shares a coarse ~1 km position for the "Responders online" count).
   static Future<void> setOnline(bool online) async {
     final data = <String, dynamic>{
@@ -635,10 +610,23 @@ class AkayBackend {
 
   // ---------- resident: evacuation status (wireframe 08) ----------
 
-  /// 'home' | 'transit' | 'evacuated'
-  static Future<void> setEvacuationStatus(String status) => _db
-      .doc('evacuationStatus/$uid')
-      .set({'status': status, 'updatedAt': FieldValue.serverTimestamp()});
+  /// 'home' | 'transit' | 'evacuated'. The event id prevents an old offline
+  /// write from overwriting a reset performed for a newer flood emergency.
+  static Future<void> setEvacuationStatus(String status) async {
+    var eventId = '';
+    try {
+      final emergency = await _db.doc('config/floodEmergency').get();
+      eventId = emergency.data()?['eventId']?.toString() ?? '';
+    } on FirebaseException {
+      // Preserve offline queuing. If a newer emergency began while offline,
+      // the rules reject this stale event id when the queued write syncs.
+    }
+    await _db.doc('evacuationStatus/$uid').set({
+      'status': status,
+      'eventId': eventId,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
 
   static Stream<DocumentSnapshot<Map<String, dynamic>>> myEvacuationStatus() =>
       _db.doc('evacuationStatus/$uid').snapshots();
@@ -819,6 +807,96 @@ class AkayBackend {
   static Stream<List<Map<String, dynamic>>> adminUsers() =>
       _db.collection('users').snapshots().map(_sorted);
 
+  /// Evacuation status records for the admin dashboard. Only admins may read these.
+  static Stream<List<Map<String, dynamic>>> adminEvacuationStatuses() =>
+      _db.collection('evacuationStatus').snapshots().map((snapshot) {
+        final items = snapshot.docs
+            .map((doc) => <String, dynamic>{'id': doc.id, ...doc.data()})
+            .toList();
+        items.sort(
+          (a, b) => _millis(b['updatedAt']).compareTo(_millis(a['updatedAt'])),
+        );
+        return items;
+      });
+
+  /// All request records for the admin's responder assignment report.
+  static Stream<List<Map<String, dynamic>>> adminRequests() =>
+      _db.collection('requests').snapshots().map(_sorted);
+
+  /// Current app-wide flood advisory. It is read by signed-in app users.
+  static Stream<Map<String, dynamic>?> floodEmergency() => _db
+      .doc('config/floodEmergency')
+      .snapshots()
+      .map((snapshot) => snapshot.data());
+
+  /// Starts an in-app flood advisory and resets all existing evacuation records.
+  /// The reset is done by the admin client in batches to stay on Firebase Spark
+  /// (no Cloud Function required). Statuses become 'unreported', not 'home'.
+  static Future<int> adminStartFloodEmergency({
+    required String title,
+    required String message,
+  }) async {
+    final adminUid = uid;
+    if (adminUid == null) throw 'Sign in as the admin first.';
+
+    final cleanTitle = title.trim();
+    final cleanMessage = message.trim();
+    if (cleanTitle.isEmpty || cleanTitle.length > 80) {
+      throw 'The advisory title must be between 1 and 80 characters.';
+    }
+    if (cleanMessage.isEmpty || cleanMessage.length > 500) {
+      throw 'The advisory message must be between 1 and 500 characters.';
+    }
+
+    final eventId = _db.collection('_floodEvents').doc().id;
+    final emergencyRef = _db.doc('config/floodEmergency');
+    await emergencyRef.set({
+      'active': false,
+      'title': cleanTitle,
+      'message': cleanMessage,
+      'eventId': eventId,
+      'startedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'startedBy': adminUid,
+      'resetCount': 0,
+      'resetComplete': false,
+    });
+    final snapshot = await _db.collection('evacuationStatus').get();
+    var resetCount = 0;
+    for (var start = 0; start < snapshot.docs.length; start += 450) {
+      final batch = _db.batch();
+      final end = (start + 450 < snapshot.docs.length)
+          ? start + 450
+          : snapshot.docs.length;
+      for (final doc in snapshot.docs.sublist(start, end)) {
+        batch.update(doc.reference, {
+          'status': 'unreported',
+          'eventId': eventId,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+      resetCount += end - start;
+    }
+
+    // Publish only after all status batches succeed, so residents cannot
+    // respond to the advisory while a later batch is still clearing statuses.
+    await emergencyRef.update({
+      'active': true,
+      'updatedAt': FieldValue.serverTimestamp(),
+      'resetCount': resetCount,
+      'resetComplete': true,
+    });
+    return resetCount;
+  }
+
+  static Future<void> adminEndFloodEmergency() async {
+    await _db.doc('config/floodEmergency').update({
+      'active': false,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   // ---------- admin: one-time pins ----------
 
   /// Every pin (newest first). Each item has 'id' (the 6 digits), role, used, expiresAt, demo,
@@ -843,9 +921,8 @@ class AkayBackend {
     }
     final custom = (customPin ?? '').replaceAll(RegExp(r'\D'), '');
     final wantsCustom = custom.isNotEmpty;
-    if (wantsCustom && custom.length != 6) {
+    if (wantsCustom && custom.length != 6)
       throw 'A pin must be exactly 6 digits.';
-    }
 
     final life = demo ? demoPinLifetime : pinLifetime;
     for (var attempt = 0; attempt < 8; attempt++) {
@@ -855,9 +932,7 @@ class AkayBackend {
       final ref = _db.doc('verificationCodes/$pin');
       try {
         if ((await ref.get()).exists) {
-          if (wantsCustom) {
-            throw 'That pin already exists. Choose another one.';
-          }
+          if (wantsCustom) throw 'That pin already exists. Choose another one.';
           continue; // random pin collided with an existing one: try another
         }
         await ref.set({

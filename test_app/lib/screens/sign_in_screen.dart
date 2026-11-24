@@ -1,10 +1,10 @@
-import 'responder_list_screen.dart';
 import 'package:flutter/material.dart';
 
 import '../akay_backend.dart';
 import '../create_account_screens.dart'; // fieldDecoration, FieldLabel, showComingSoon
 import '../main.dart'; // colors + HomeScreen
 import 'emergency_info_screen.dart';
+import 'responder_list_screen.dart';
 import 'screen_widgets.dart';
 
 // ============================================================
@@ -35,12 +35,20 @@ class _SignInScreenState extends State<SignInScreen> {
     super.dispose();
   }
 
-  // Format: 09XX XXX XXXX (spaces are added automatically by PhMobileFormatter).
+  // Accepts 09123456789, +63 912 345 6789, or 9123456789.
   String? _validateMobile(String? value) {
-    final digits = (value ?? '').replaceAll(RegExp(r'\D'), '');
     // The demonstration admin account signs in with the short number 00000000.
-    if (digits == AkayBackend.adminMobile) return null;
-    return validatePhMobile(value);
+    if ((value ?? '').trim() == AkayBackend.adminMobile) return null;
+    var digits = (value ?? '').replaceAll(RegExp(r'\D'), '');
+    if (digits.startsWith('63')) {
+      digits = digits.substring(2);
+    } else if (digits.startsWith('0')) {
+      digits = digits.substring(1);
+    }
+    if (digits.length != 10 || !digits.startsWith('9')) {
+      return 'Enter a valid mobile number, e.g. +63 912 345 6789';
+    }
+    return null;
   }
 
   String? _validatePassword(String? value) {
@@ -58,10 +66,15 @@ class _SignInScreenState extends State<SignInScreen> {
         mobile: _mobileController.text,
         password: _passwordController.text,
       );
+      if (!mounted) return;
       final isResponder = await AkayBackend.isRespondent();
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => isResponder ? const ResponderListScreen() : const HomeScreen()),
+        MaterialPageRoute(
+          builder: (_) => isResponder
+              ? const ResponderListScreen()
+              : const HomeScreen(),
+        ),
         (route) => false,
       );
     } catch (e) {
@@ -92,9 +105,8 @@ class _SignInScreenState extends State<SignInScreen> {
               controller: _mobileController,
               keyboardType: TextInputType.phone,
               textInputAction: TextInputAction.next,
-              inputFormatters: [PhMobileFormatter()],
               validator: _validateMobile,
-              decoration: fieldDecoration('09XX XXX XXXX'),
+              decoration: fieldDecoration('+63 9XX XXX XXXX'),
             ),
             const SizedBox(height: 16),
             const FieldLabel('Password'),

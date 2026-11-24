@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../akay_backend.dart';
 import '../main.dart'; // colors: kGreen, kRed, kBorder, ...
 
 // ============================================================
@@ -14,6 +15,70 @@ import '../main.dart'; // colors: kGreen, kRed, kBorder, ...
 // Set to false before the final demo to show only real data.
 const bool kShowSampleData = true;
 
+/// Live in-app advisory shared by resident and responder screens.
+class FloodAdvisoryBanner extends StatelessWidget {
+  const FloodAdvisoryBanner({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    if (!AkayBackend.isSignedIn) return const SizedBox.shrink();
+
+    return StreamBuilder<Map<String, dynamic>?>(
+      stream: AkayBackend.floodEmergency(),
+      builder: (context, snapshot) {
+        final advisory = snapshot.data;
+        if (snapshot.hasError || advisory?['active'] != true) {
+          return const SizedBox.shrink();
+        }
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(bottom: 14),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFF1E8),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE7A16C)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.water_drop, color: Color(0xFF9A3F17)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      (advisory?['title'] ?? 'Flood emergency').toString(),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF702D13),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      (advisory?['message'] ?? '').toString(),
+                      style: const TextStyle(color: Color(0xFF702D13)),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Please check and update your evacuation status.',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF702D13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 // ---------- Hotline ----------
 const kHotlineNumber = '911';
 
@@ -26,7 +91,11 @@ Future<void> callHotline(BuildContext context) async {
     if (!ok) throw 'no dialer';
   } catch (_) {
     messenger.showSnackBar(
-      const SnackBar(content: Text('Could not open the dialer. Please call $kHotlineNumber.')),
+      const SnackBar(
+        content: Text(
+          'Could not open the dialer. Please call $kHotlineNumber.',
+        ),
+      ),
     );
   }
 }
@@ -65,6 +134,7 @@ class AkayScreen extends StatelessWidget {
   final Widget child;
   final bool showBack;
   final Widget? trailing;
+
   const AkayScreen({
     super.key,
     required this.child,
@@ -104,11 +174,17 @@ class AkayScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  trailing ?? const SizedBox(width: 48),
+                  SizedBox(
+                    width: 48,
+                    child: trailing == null
+                        ? null
+                        : Center(child: trailing),
+                  ), // balances the back button to keep the title centered
                 ],
               ),
             ),
             const Divider(height: 1, color: kBorder),
+            if (AkayBackend.isSignedIn) const FloodAdvisoryBanner(),
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
@@ -127,11 +203,15 @@ class ScreenTitle extends StatelessWidget {
   final String label;
   final String title;
   final String? subtitle;
+  final bool showBack;
+  final Widget? trailing;
   const ScreenTitle({
     super.key,
     required this.label,
     required this.title,
     this.subtitle,
+    this.showBack = false,
+    this.trailing,
   });
 
   @override
@@ -139,6 +219,24 @@ class ScreenTitle extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (showBack || trailing != null) ...[
+          Row(
+            children: [
+              if (showBack)
+                IconButton(
+                  tooltip: 'Back',
+                  padding: EdgeInsets.zero,
+                  alignment: Alignment.centerLeft,
+                  constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                  icon: const Icon(Icons.arrow_back, color: kTextDark),
+                  onPressed: () => Navigator.of(context).maybePop(),
+                ),
+              const Spacer(),
+              if (trailing != null) trailing!,
+            ],
+          ),
+          const SizedBox(height: 8),
+        ],
         Text(label, style: kSmallLabel),
         const SizedBox(height: 8),
         Text(
@@ -154,7 +252,11 @@ class ScreenTitle extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             subtitle!,
-            style: const TextStyle(fontSize: 14, color: kTextGrey, height: 1.45),
+            style: const TextStyle(
+              fontSize: 14,
+              color: kTextGrey,
+              height: 1.45,
+            ),
           ),
         ],
       ],
@@ -308,10 +410,7 @@ class StepRow extends StatelessWidget {
           Column(
             children: [
               dot,
-              if (!isLast)
-                Expanded(
-                  child: Container(width: 2, color: kBorder),
-                ),
+              if (!isLast) Expanded(child: Container(width: 2, color: kBorder)),
             ],
           ),
           const SizedBox(width: 12),
@@ -328,7 +427,9 @@ class StepRow extends StatelessWidget {
                       fontWeight: state == StepStatus.waiting
                           ? FontWeight.w400
                           : FontWeight.w700,
-                      color: state == StepStatus.waiting ? kTextGrey : kTextDark,
+                      color: state == StepStatus.waiting
+                          ? kTextGrey
+                          : kTextDark,
                     ),
                   ),
                   if (caption != null) ...[
@@ -377,7 +478,9 @@ class SolidAction extends StatelessWidget {
           disabledBackgroundColor: color.withValues(alpha: 0.5),
           disabledForegroundColor: Colors.white,
           elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
         child: loading
             ? const SizedBox(
@@ -391,7 +494,10 @@ class SolidAction extends StatelessWidget {
             : Text(
                 label,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
       ),
     );
@@ -427,7 +533,9 @@ class OutlineAction extends StatelessWidget {
           foregroundColor: kTextDark,
           backgroundColor: Colors.white,
           side: const BorderSide(color: kTextDark, width: 1.2),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
       ),
     );
@@ -438,7 +546,11 @@ class OutlineAction extends StatelessWidget {
 class TextLinkButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
-  const TextLinkButton({super.key, required this.label, required this.onPressed});
+  const TextLinkButton({
+    super.key,
+    required this.label,
+    required this.onPressed,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -604,7 +716,10 @@ class MiniMap extends StatelessWidget {
             Align(
               alignment: const Alignment(-0.35, 0.45),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   shape: BoxShape.circle,

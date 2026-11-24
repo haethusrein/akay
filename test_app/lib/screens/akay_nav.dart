@@ -91,6 +91,7 @@ class TabScaffold extends StatelessWidget {
             children: [
               const AkayTopBar(),
               const SizedBox(height: 16),
+              const FloodAdvisoryBanner(),
               const ConnectedBanner(),
               const SizedBox(height: 22),
               child,
