@@ -26,7 +26,7 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
+import 'admin_evacuation_qr_screen.dart';
 import '../akay_backend.dart';
 import '../main.dart'; // colors and text styles
 import 'screen_widgets.dart'; // StatusBanner, confirmDialog, requestTypeLabel, requestTypeIcon

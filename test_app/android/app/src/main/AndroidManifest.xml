@@ -2,7 +2,7 @@
     <!-- Location is used by AKAY's existing GPS features. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-
+    <uses-permission android:name="android.permission.CAMERA" />
     <!-- Keep only if AKAY will place calls directly without opening the dialer. -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
 
