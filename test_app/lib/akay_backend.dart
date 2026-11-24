@@ -610,18 +610,29 @@ class AkayBackend {
 
   // ---------- resident: evacuation status (wireframe 08) ----------
 
-  /// 'home' | 'transit' | 'evacuated'. The event id prevents an old offline
-  /// write from overwriting a reset performed for a newer flood emergency.
+  /// 'home' | 'transit' | 'evacuated'. Residents may update only during an
+  /// active admin flood emergency. The event id prevents stale writes from
+  /// crossing emergency boundaries.
   static Future<void> setEvacuationStatus(String status) async {
-    var eventId = '';
-    try {
-      final emergency = await _db.doc('config/floodEmergency').get();
-      eventId = emergency.data()?['eventId']?.toString() ?? '';
-    } on FirebaseException {
-      // Preserve offline queuing. If a newer emergency began while offline,
-      // the rules reject this stale event id when the queued write syncs.
+    final me = uid;
+    if (me == null) throw 'Sign in before updating evacuation status.';
+    if (!const {'home', 'transit', 'evacuated'}.contains(status)) {
+      throw 'Choose a valid evacuation status.';
     }
-    await _db.doc('evacuationStatus/$uid').set({
+
+    final emergency = await _db.doc('config/floodEmergency').get(
+      const GetOptions(source: Source.server),
+    );
+    final emergencyData = emergency.data();
+    final eventId = emergencyData?['eventId']?.toString() ?? '';
+    if (!emergency.exists ||
+        emergencyData?['active'] != true ||
+        emergencyData?['resetComplete'] != true ||
+        eventId.isEmpty) {
+      throw 'Evacuation status can only be updated during an active admin flood emergency.';
+    }
+
+    await _db.doc('evacuationStatus/$me').set({
       'status': status,
       'eventId': eventId,
       'updatedAt': FieldValue.serverTimestamp(),
@@ -921,8 +932,9 @@ class AkayBackend {
     }
     final custom = (customPin ?? '').replaceAll(RegExp(r'\D'), '');
     final wantsCustom = custom.isNotEmpty;
-    if (wantsCustom && custom.length != 6)
+    if (wantsCustom && custom.length != 6) {
       throw 'A pin must be exactly 6 digits.';
+    }
 
     final life = demo ? demoPinLifetime : pinLifetime;
     for (var attempt = 0; attempt < 8; attempt++) {

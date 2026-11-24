@@ -28,6 +28,13 @@ service cloud.firestore {
         ? get(/databases/$(database)/documents/config/floodEmergency).data.eventId
         : '';
     }
+    function floodEmergencyActive() {
+      return exists(/databases/$(database)/documents/config/floodEmergency)
+        && get(/databases/$(database)/documents/config/floodEmergency).data.active == true
+        && get(/databases/$(database)/documents/config/floodEmergency).data.resetComplete == true
+        && get(/databases/$(database)/documents/config/floodEmergency).data.eventId is string
+        && get(/databases/$(database)/documents/config/floodEmergency).data.eventId.size() > 0;
+    }
     function codePath(code) { return /databases/$(database)/documents/verificationCodes/$(code); }
     function reqAfter(id) { return getAfter(/databases/$(database)/documents/requests/$(id)).data; }
     function reqNow(id) { return get(/databases/$(database)/documents/requests/$(id)).data; }
@@ -329,6 +336,7 @@ service cloud.firestore {
       // Residents can read their own record; admins can view the roster.
       allow read: if isSelf(uid) || isAdmin();
       allow create: if isSelf(uid)
+        && floodEmergencyActive()
         && request.resource.data.keys().hasOnly(['status', 'updatedAt', 'eventId'])
         && request.resource.data.keys().hasAll(['status', 'updatedAt'])
         && request.resource.data.status in ['home', 'transit', 'evacuated']
@@ -336,6 +344,7 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time;
       allow update: if (
           isSelf(uid)
+          && floodEmergencyActive()
           && request.resource.data.keys().hasOnly(['status', 'updatedAt', 'eventId'])
           && request.resource.data.keys().hasAll(['status', 'updatedAt'])
           && request.resource.data.status in ['home', 'transit', 'evacuated']
