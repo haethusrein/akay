@@ -8,8 +8,18 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
-
 import 'create_account_screens.dart' show UserRole;
+
+/// An expected application error with a safe message intended for the user.
+/// Unexpected exception details must go through [AkayBackend.friendlyError].
+class AkayException implements Exception {
+  const AkayException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
 
 class AkayBackend {
   AkayBackend._();
@@ -64,17 +74,20 @@ class AkayBackend {
     'createdAt': FieldValue.serverTimestamp(),
   };
 
-  /// Turns any error into a message you can show in a SnackBar.
-  static String friendlyError(Object e) {
-    // Every error that is shown to a user is also saved for the admin (Error log tab).
-    // Plain text messages are expected ("You already have an active request."), so they are skipped.
-    if (e is! String &&
-        !(e is FirebaseException &&
-            (e.code == 'unavailable' || e.code == 'network-request-failed'))) {
-      logError(e, null, 'shown to user');
+  /// Converts expected errors into safe, user-facing messages.
+  /// Unknown SDK or programming errors always receive a generic message.
+  static String friendlyError(Object error) {
+    if (error is! AkayException &&
+        !(error is FirebaseException &&
+            (error.code == 'unavailable' ||
+                error.code == 'network-request-failed'))) {
+      logError(error, null, 'shown to user');
     }
-    if (e is FirebaseAuthException) {
-      switch (e.code) {
+
+    if (error is AkayException) return error.message;
+
+    if (error is FirebaseAuthException) {
+      switch (error.code) {
         case 'email-already-in-use':
           return 'We could not create this account. Check your details, or sign in if you already registered.';
         case 'invalid-credential':
@@ -89,18 +102,38 @@ class AkayBackend {
           return 'Too many attempts. Try again later.';
         case 'network-request-failed':
           return 'No internet connection.';
+        case 'user-disabled':
+          return 'This account is disabled. Contact the AKAY administrator.';
+        default:
+          return 'We could not complete sign-in. Please try again.';
+      }
+    }
+
+    if (error is FirebaseException) {
+      switch (error.code) {
+        case 'permission-denied':
+          return 'You are not allowed to do that.';
+        case 'unauthenticated':
+          return 'Please sign in again and try once more.';
+        case 'unavailable':
+        case 'network-request-failed':
+          return 'No internet connection. Please try again.';
+        case 'deadline-exceeded':
+          return 'The request took too long. Please try again.';
+        case 'not-found':
+          return 'The requested information could not be found.';
+        case 'already-exists':
+          return 'That item already exists.';
+        case 'resource-exhausted':
+          return 'The service is busy. Please try again shortly.';
+        case 'cancelled':
+          return 'The action was cancelled.';
         default:
           return 'Something went wrong. Please try again.';
       }
     }
-    if (e is FirebaseException) {
-      if (e.code == 'permission-denied') {
-        return 'Not allowed. (If you tapped Accept, someone else may have taken it already.)';
-      }
-      if (e.code == 'unavailable') return 'No internet connection.';
-      return e.message ?? 'Something went wrong.';
-    }
-    return e.toString();
+
+    return 'Something went wrong. Please try again.';
   }
 
   // ---------- accounts ----------
@@ -120,6 +153,7 @@ class AkayBackend {
         'mobile': '+${_digits(mobile)}',
         'role': role.name, // 'resident' | 'respondent'
         'verified': false,
+        'accountStatus': 'active',
         'createdAt': FieldValue.serverTimestamp(),
       });
     } catch (_) {
@@ -132,10 +166,64 @@ class AkayBackend {
   static Future<void> signIn({
     required String mobile,
     required String password,
-  }) => _auth.signInWithEmailAndPassword(
-    email: _emailFor(mobile),
-    password: password,
-  );
+  }) async {
+    try {
+      final credential = await _auth.signInWithEmailAndPassword(
+        email: _emailFor(mobile),
+        password: password,
+      );
+
+      final user = credential.user;
+      if (user == null) {
+        throw const AkayException('We could not sign in. Please try again.');
+      }
+
+      // A user can read only their own profile so this check can reject a
+      // deactivated account before the app opens.
+      final profile = await _db.doc('users/${user.uid}').get();
+      final accountStatus = profile.data()?['accountStatus'];
+
+      if (!profile.exists || accountStatus == 'deleted') {
+        await _auth.signOut();
+        throw const AkayException('This AKAY account has been deactivated.');
+      }
+    } catch (_) {
+      // Do not leave an Auth session open if the profile check fails.
+      await _auth.signOut();
+      rethrow;
+    }
+  }
+
+  /// Marks the signed-in account as deleted and signs it out.
+  /// The Firebase Auth account and its Firestore data remain stored.
+  static Future<void> deactivateAccount({
+    required String password,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw const AkayException('Please sign in again and try once more.');
+    }
+
+    final email = user.email;
+    if (email == null || email.isEmpty) {
+      throw const AkayException('We could not verify this account.');
+    }
+
+    await user.reauthenticateWithCredential(
+      EmailAuthProvider.credential(
+        email: email,
+        password: password,
+      ),
+    );
+
+    await _db.doc('users/${user.uid}').update({
+      'accountStatus': 'deleted',
+      'deletedAt': FieldValue.serverTimestamp(),
+    });
+
+    // Firestore rules reject app access once accountStatus is deleted.
+    await _auth.signOut();
+  }
 
   static Future<void> signOut() => _auth.signOut();
 
@@ -168,7 +256,9 @@ class AkayBackend {
   /// Codes are created by hand in the console: verificationCodes/<6-digit code> { role, used: false, expiresAt }
   static Future<void> verifyCode(String raw) async {
     final code = raw.replaceAll(RegExp(r'\D'), '');
-    if (code.length != 6) throw 'Invalid or already used code.';
+    if (code.length != 6) {
+      throw const AkayException('Invalid or already used code.');
+    }
     final batch = _db.batch();
     batch.update(_db.doc('verificationCodes/$code'), {
       'used': true,
@@ -182,7 +272,7 @@ class AkayBackend {
       await batch.commit();
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied' || e.code == 'not-found') {
-        throw 'Invalid or already used code.';
+        throw const AkayException('Invalid or already used code.');
       }
       rethrow;
     }
@@ -197,7 +287,7 @@ class AkayBackend {
   /// Asks for permission and returns the phone's GPS position.
   static Future<Position> currentPosition() async {
     if (!await Geolocator.isLocationServiceEnabled()) {
-      throw 'Turn on your phone location (GPS).';
+      throw const AkayException('Turn on your phone location (GPS).');
     }
     var perm = await Geolocator.checkPermission();
     if (perm == LocationPermission.denied) {
@@ -205,7 +295,9 @@ class AkayBackend {
     }
     if (perm == LocationPermission.denied ||
         perm == LocationPermission.deniedForever) {
-      throw 'Location permission is needed so responders can find you.';
+      throw const AkayException(
+        'Location permission is needed so responders can find you.',
+      );
     }
     return Geolocator.getCurrentPosition(
       locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
@@ -227,10 +319,14 @@ class AkayBackend {
         .where('status', whereIn: ['pending', 'matched'])
         .limit(1)
         .get();
-    if (active.docs.isNotEmpty) throw 'You already have an active request.';
+    if (active.docs.isNotEmpty) {
+      throw const AkayException('You already have an active request.');
+    }
 
     final hh = await _db.doc('households/$me').get();
-    if (!hh.exists) throw 'Complete your household profile first.';
+    if (!hh.exists) {
+      throw const AkayException('Complete your household profile first.');
+    }
     final h = hh.data()!;
     final pos = await currentPosition();
 
@@ -285,17 +381,20 @@ class AkayBackend {
   }
 
   /// Requester cancels.
-  /// Requester cancels.
   static Future<void> cancelRequest(String id) async {
     final me = uid!;
     final ref = _db.doc('requests/$id');
     await _db.runTransaction((transaction) async {
       final snapshot = await transaction.get(ref);
       final r = snapshot.data();
-      if (r == null) throw 'Request not found.';
-      if (r['userId'] != me) throw 'You can only cancel your own request.';
+      if (r == null) {
+        throw const AkayException('Request not found.');
+      }
+      if (r['userId'] != me) {
+        throw const AkayException('You can only cancel your own request.');
+      }
       if (r['status'] != 'pending' && r['status'] != 'matched') {
-        throw 'This request can no longer be cancelled.';
+        throw const AkayException('This request can no longer be cancelled.');
       }
       final requesterId = r['userId'] as String;
       final responderId = r['responderId'] as String?;
@@ -332,13 +431,15 @@ class AkayBackend {
         final requestSnapshot = await transaction.get(ref);
         final r = requestSnapshot.data();
         if (r == null || r['status'] != 'pending') {
-          throw 'Request already taken or unavailable.';
+          throw const AkayException('Request already taken or unavailable.');
         }
-        if (r['userId'] == me) throw 'You cannot accept your own request.';
+        if (r['userId'] == me) {
+          throw const AkayException('You cannot accept your own request.');
+        }
         final profileSnapshot = await transaction.get(_db.doc('users/$me'));
         final mobile = profileSnapshot.data()?['mobile'] as String?;
         if (mobile == null || mobile.isEmpty) {
-          throw 'Your account is missing a mobile number.';
+          throw const AkayException('Your account is missing a mobile number.');
         }
         final requesterId = r['userId'] as String;
         // All reads are complete before any transaction writes.
@@ -363,7 +464,9 @@ class AkayBackend {
       });
     } on FirebaseException catch (e) {
       if (e.code == 'permission-denied') {
-        throw 'Could not accept. It may already be taken, or you already have an active job.';
+        throw const AkayException(
+          'Could not accept. It may already be taken, or you already have an active job.',
+        );
       }
       rethrow;
     }
@@ -375,14 +478,16 @@ class AkayBackend {
     await _db.runTransaction((transaction) async {
       final snapshot = await transaction.get(ref);
       final r = snapshot.data();
-      if (r == null) throw 'Request not found.';
+      if (r == null) {
+        throw const AkayException('Request not found.');
+      }
       if (r['status'] != 'matched') {
-        throw 'Only a matched request can be resolved.';
+        throw const AkayException('Only a matched request can be resolved.');
       }
       final requesterId = r['userId'] as String;
       final responderId = r['responderId'] as String?;
       if (me != requesterId && me != responderId) {
-        throw 'You are not part of this request.';
+        throw const AkayException('You are not part of this request.');
       }
       final otherId = me == requesterId ? responderId : requesterId;
       // All reads are complete before any transaction writes.
@@ -412,7 +517,7 @@ class AkayBackend {
     final ref = _db.doc('requests/$id');
     final r = (await ref.get()).data();
     if (r == null || r['responderId'] != uid || r['status'] != 'matched') {
-      throw 'This request is not assigned to you.';
+      throw const AkayException('This request is not assigned to you.');
     }
     final loc = r['location'] as GeoPoint;
     final batch = _db.batch();
@@ -451,12 +556,14 @@ class AkayBackend {
     final ref = _db.doc('requests/$id');
     final r = (await ref.get()).data();
     if (r == null || r['userId'] != uid || r['status'] != 'matched') {
-      throw 'This request cannot be re-opened.';
+      throw const AkayException('This request cannot be re-opened.');
     }
     final matchedAt = r['matchedAt'];
     if (matchedAt is! Timestamp ||
         DateTime.now().difference(matchedAt.toDate()) < reopenAfter) {
-      throw 'You can re-open this request 15 minutes after a responder accepts it.';
+      throw const AkayException(
+        'You can re-open this request 15 minutes after a responder accepts it.',
+      );
     }
     final loc = r['location'] as GeoPoint;
     final batch = _db.batch();
@@ -545,9 +652,10 @@ class AkayBackend {
   }
 
   /// Responder: "Decline - show next responder". Hides this request from MY list only.
-  static Future<void> declineRequest(String requestId) => _db
-      .doc('responderDeclines/$uid/items/$requestId')
-      .set({'createdAt': FieldValue.serverTimestamp()});
+  static Future<void> declineRequest(String requestId) =>
+      _db.doc('responderDeclines/$uid/items/$requestId').set({
+        'createdAt': FieldValue.serverTimestamp(),
+      });
 
   /// Responder: "Report suspicious ping". Admins read the `reports` collection in the console.
   static Future<void> reportRequest(String requestId, {String? reason}) =>
@@ -578,9 +686,11 @@ class AkayBackend {
   // ---------- resident: evacuation status (wireframe 08) ----------
 
   /// 'home' | 'transit' | 'evacuated'
-  static Future<void> setEvacuationStatus(String status) => _db
-      .doc('evacuationStatus/$uid')
-      .set({'status': status, 'updatedAt': FieldValue.serverTimestamp()});
+  static Future<void> setEvacuationStatus(String status) =>
+      _db.doc('evacuationStatus/$uid').set({
+        'status': status,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
 
   static Stream<DocumentSnapshot<Map<String, dynamic>>> myEvacuationStatus() =>
       _db.doc('evacuationStatus/$uid').snapshots();
@@ -698,20 +808,18 @@ class AkayBackend {
   static Stream<QuerySnapshot<Map<String, dynamic>>> notifications() {
     final me = uid;
     if (me == null) return const Stream.empty();
-    return _notifsOf(me)
-        .orderBy('createdAt', descending: true)
-        .limit(50)
-        .snapshots();
+    return _notifsOf(
+      me,
+    ).orderBy('createdAt', descending: true).limit(50).snapshots();
   }
 
   /// Bell badge number
   static Stream<int> unreadCount() {
     final me = uid;
     if (me == null) return Stream.value(0);
-    return _notifsOf(me)
-        .where('isRead', isEqualTo: false)
-        .snapshots()
-        .map((s) => s.size);
+    return _notifsOf(
+      me,
+    ).where('isRead', isEqualTo: false).snapshots().map((s) => s.size);
   }
 
   static Future<void> markRead(String id) async {
@@ -729,10 +837,9 @@ class AkayBackend {
   static Future<void> markAllRead() async {
     final me = uid;
     if (me == null) return;
-    final snap = await _notifsOf(me)
-        .where('isRead', isEqualTo: false)
-        .limit(400)
-        .get();
+    final snap = await _notifsOf(
+      me,
+    ).where('isRead', isEqualTo: false).limit(400).get();
     final batch = _db.batch();
     for (final d in snap.docs) {
       batch.update(d.reference, {'isRead': true});
@@ -779,14 +886,17 @@ class AkayBackend {
     String? customPin,
   }) async {
     final me = uid;
-    if (me == null) throw 'Sign in first.';
+    if (me == null) {
+      throw const AkayException('Sign in first.');
+    }
     if (role != 'resident' && role != 'respondent') {
-      throw 'Pins can only be made for residents or responders.';
+      throw const AkayException('Pins can only be made for residents or responders.');
     }
     final custom = (customPin ?? '').replaceAll(RegExp(r'\D'), '');
     final wantsCustom = custom.isNotEmpty;
-    if (wantsCustom && custom.length != 6)
-      throw 'A pin must be exactly 6 digits.';
+    if (wantsCustom && custom.length != 6) {
+      throw const AkayException('A pin must be exactly 6 digits.');
+    }
 
     final life = demo ? demoPinLifetime : pinLifetime;
     for (var attempt = 0; attempt < 8; attempt++) {
@@ -796,7 +906,9 @@ class AkayBackend {
       final ref = _db.doc('verificationCodes/$pin');
       try {
         if ((await ref.get()).exists) {
-          if (wantsCustom) throw 'That pin already exists. Choose another one.';
+          if (wantsCustom) {
+            throw const AkayException('That pin already exists. Choose another one.');
+          }
           continue; // random pin collided with an existing one: try another
         }
         await ref.set({
@@ -812,12 +924,14 @@ class AkayBackend {
         return pin;
       } on FirebaseException catch (e) {
         if (e.code == 'permission-denied') {
-          throw 'Could not save the pin. Deploy the latest firestore.rules and sign in as the admin.';
+          throw const AkayException(
+            'Could not save the pin. Deploy the latest firestore.rules and sign in as the admin.',
+          );
         }
         rethrow;
       }
     }
-    throw 'Could not find a free pin. Try again.';
+    throw const AkayException('Could not find a free pin. Try again.');
   }
 
   /// Pin for one new account (role and mobile are copied from the account).
@@ -893,7 +1007,9 @@ class AkayBackend {
     } catch (e, st) {
       await _writeErrorLog(e, st, 'admin test').timeout(
         const Duration(seconds: 10),
-        onTimeout: () => throw 'No internet connection. The entry will be saved when you are back online.',
+        onTimeout: () => throw const AkayException(
+          'No internet connection. The entry will be saved when you are back online.',
+        ),
       );
     }
   }
