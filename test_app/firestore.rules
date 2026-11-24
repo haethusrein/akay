@@ -61,7 +61,7 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['mobile', 'role', 'verified', 'createdAt', 'accountStatus'])
         && request.resource.data.keys().hasAll(['mobile', 'role', 'verified', 'createdAt'])
         && request.resource.data.mobile is string
-        && request.resource.data.mobile.matches('^\\\\+639[0-9]{9}$')
+        && request.resource.data.mobile.matches('^\\+639[0-9]{9}$')
         && request.resource.data.role in ['resident', 'respondent']
         && request.resource.data.verified == false
         && (!('accountStatus' in request.resource.data)
