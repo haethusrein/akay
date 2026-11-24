@@ -498,7 +498,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
           builder: (_) =>
-              isResponder ? const ResponderListScreen() : const HomeScreen(),
+              widget.isResponder ? const ResponderListScreen() : const HomeScreen(),
         ),
         (route) => false,
       );
