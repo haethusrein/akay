@@ -449,16 +449,27 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
 
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
+  bool _isVerifying = false;
 
   @override
   void initState() {
     super.initState();
-    _controller.addListener(() => setState(() {}));
-    _focusNode.addListener(() => setState(() {}));
+    _controller.addListener(_onCodeChanged);
+    _focusNode.addListener(_onFocusChanged);
+  }
+
+  void _onCodeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onFocusChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    _controller.removeListener(_onCodeChanged);
+    _focusNode.removeListener(_onFocusChanged);
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -467,15 +478,26 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
   bool get _complete => _controller.text.length == _codeLength;
 
   Future<void> _verify() async {
+    if (!_complete || _isVerifying) return;
+
+    setState(() => _isVerifying = true);
+
     try {
+      // This call checks the code against Firestore.
       await AkayBackend.verifyCode(_controller.text);
+
       if (!mounted) return;
+
+      // Reaching this point means the server accepted the code.
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const HomeScreen()),
         (route) => false,
       );
     } catch (e) {
-      if (mounted) showComingSoon(context, AkayBackend.friendlyError(e));
+      if (!mounted) return;
+
+      setState(() => _isVerifying = false);
+      showComingSoon(context, AkayBackend.friendlyError(e));
     }
   }
 
@@ -494,7 +516,11 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
               color: kLightGreen,
               borderRadius: BorderRadius.circular(16),
             ),
-            child: const Icon(Icons.shield_outlined, color: kGreen, size: 28),
+            child: const Icon(
+              Icons.shield_outlined,
+              color: kGreen,
+              size: 28,
+            ),
           ),
           const SizedBox(height: 16),
           const Text('IDENTITY VERIFICATION', style: kSmallLabel),
@@ -548,29 +574,30 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: kLightGreen,
+                color: const Color(0xFFF2F8F5),
                 borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: kBorder),
               ),
               child: const Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.check, size: 18, color: kGreen),
+                  Icon(Icons.info_outline, size: 18, color: kGreen),
                   SizedBox(width: 10),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Registry match found',
+                          'Six digits entered',
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w700,
-                            color: kGreen,
+                            color: kTextDark,
                           ),
                         ),
                         SizedBox(height: 2),
                         Text(
-                          'Your account will receive a verified badge.',
+                          'Tap Verify code to check it. The code is not verified yet.',
                           style: kGreyText,
                         ),
                       ],
@@ -582,15 +609,14 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
             const SizedBox(height: 18),
           ],
           PrimaryButton(
-            label: 'Verify and open home',
-            onPressed: _complete ? _verify : null,
+            label: _isVerifying ? 'Checking code...' : 'Verify code',
+            onPressed: _complete && !_isVerifying ? _verify : null,
           ),
         ],
       ),
     );
   }
 }
-
 // ============================================================
 // Shared building blocks
 // ============================================================
