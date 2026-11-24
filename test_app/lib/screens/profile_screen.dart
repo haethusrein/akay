@@ -10,6 +10,9 @@ import 'evacuation_status_screen.dart';
 import 'nearby_sos_screens.dart';
 import 'responder_list_screen.dart';
 import 'screen_widgets.dart';
+import 'edit_household_profile_screen.dart';
+import 'settings_screen.dart';
+import '../l10n/app_strings.dart';
 
 // ============================================================
 // AKAY - Profile tab
@@ -97,7 +100,7 @@ class ProfileScreen extends StatelessWidget {
               final role = p?['role'] == 'respondent' ? 'Respondent' : 'Resident';
               final verified = p?['verified'] == true;
 
-              return AppCard(
+return AppCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -161,6 +164,35 @@ class ProfileScreen extends StatelessWidget {
                           ),
                         ),
                       ],
+                    ),
+                    const Divider(height: 24),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.edit_outlined),
+                      title: Text(AppStrings.tr('edit_household_profile')),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => EditHouseholdProfileScreen(
+                              currentData: p ?? {},
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(Icons.settings_outlined),
+                      title: Text(AppStrings.tr('settings')),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const SettingsScreen(),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),

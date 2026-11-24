@@ -8,6 +8,7 @@ import 'firebase_options.dart';
 import 'screens/akay_nav.dart';
 import 'screens/request_help_sheet.dart';
 import 'screens/responder_list_screen.dart';
+import 'l10n/app_strings.dart';
 
 // ============================================================
 // AKAY - Home screen
@@ -49,46 +50,51 @@ class AkayApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'AKAY',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: kGreen,
-        scaffoldBackgroundColor: kBackground,
-      ),
-      home: StreamBuilder<User?>(
-        stream: FirebaseAuth.instance.authStateChanges(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Scaffold(
-              body: Center(child: CircularProgressIndicator(color: kGreen)),
-            );
-          }
+    return ValueListenableBuilder<AppLanguage>(
+      valueListenable: AppStrings.current,
+      builder: (context, _, __) {
+        return MaterialApp(
+          debugShowCheckedModeBanner: false,
+          title: 'AKAY',
+          theme: ThemeData(
+            useMaterial3: true,
+            colorSchemeSeed: kGreen,
+            scaffoldBackgroundColor: kBackground,
+          ),
+          home: StreamBuilder<User?>(
+            stream: FirebaseAuth.instance.authStateChanges(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Scaffold(
+                  body: Center(child: CircularProgressIndicator(color: kGreen)),
+                );
+              }
 
-          if (snapshot.hasData) {
-            return StreamBuilder(
-              stream: AkayBackend.myProfile(),
-              builder: (context, profileSnap) {
-                if (profileSnap.connectionState == ConnectionState.waiting) {
-                  return const Scaffold(
-                    body: Center(
-                      child: CircularProgressIndicator(color: kGreen),
-                    ),
-                  );
-                }
-                final isRespondent =
-                    profileSnap.data?.data()?['role'] == 'respondent';
-                return isRespondent
-                    ? const ResponderListScreen()
-                    : const HomeScreen();
-              },
-            );
-          }
+              if (snapshot.hasData) {
+                return StreamBuilder(
+                  stream: AkayBackend.myProfile(),
+                  builder: (context, profileSnap) {
+                    if (profileSnap.connectionState == ConnectionState.waiting) {
+                      return const Scaffold(
+                        body: Center(
+                          child: CircularProgressIndicator(color: kGreen),
+                        ),
+                      );
+                    }
+                    final isRespondent =
+                        profileSnap.data?.data()?['role'] == 'respondent';
+                    return isRespondent
+                        ? const ResponderListScreen()
+                        : const HomeScreen();
+                  },
+                );
+              }
 
-          return const WelcomeScreen();
-        },
-      ),
+              return const WelcomeScreen();
+            },
+          ),
+        );
+      },
     );
   }
 }
