@@ -55,7 +55,7 @@ class MapConfig {
 
   /// Must be your app id (it is in android/app/build.gradle.kts as applicationId).
   /// OpenStreetMap asks apps to send this.
-  static const String appId = 'com.example.test_app';
+  static const String appId = 'com.akay.akay';
 
   // ---------- 5. PIN colors and names ----------
   static const Color floodColor = Color(0xFF2F80C9);
