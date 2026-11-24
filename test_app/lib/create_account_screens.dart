@@ -381,7 +381,7 @@ class _HouseholdSetupScreenState extends State<HouseholdSetupScreen> {
                   });
                 } catch (e) {
                   if (!context.mounted) return;
-                  showComingSoon(context, e.toString());
+                  showComingSoon(context, AkayBackend.friendlyError(e));
                 }
               },
             ),
