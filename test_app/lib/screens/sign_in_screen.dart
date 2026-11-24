@@ -35,20 +35,12 @@ class _SignInScreenState extends State<SignInScreen> {
     super.dispose();
   }
 
-  // Accepts 09123456789, +63 912 345 6789, or 9123456789.
+  // Format: 09XX XXX XXXX (spaces are added automatically by PhMobileFormatter).
   String? _validateMobile(String? value) {
+    final digits = (value ?? '').replaceAll(RegExp(r'\D'), '');
     // The demonstration admin account signs in with the short number 00000000.
-    if ((value ?? '').trim() == AkayBackend.adminMobile) return null;
-    var digits = (value ?? '').replaceAll(RegExp(r'\D'), '');
-    if (digits.startsWith('63')) {
-      digits = digits.substring(2);
-    } else if (digits.startsWith('0')) {
-      digits = digits.substring(1);
-    }
-    if (digits.length != 10 || !digits.startsWith('9')) {
-      return 'Enter a valid mobile number, e.g. +63 912 345 6789';
-    }
-    return null;
+    if (digits == AkayBackend.adminMobile) return null;
+    return validatePhMobile(value);
   }
 
   String? _validatePassword(String? value) {
@@ -100,8 +92,9 @@ class _SignInScreenState extends State<SignInScreen> {
               controller: _mobileController,
               keyboardType: TextInputType.phone,
               textInputAction: TextInputAction.next,
+              inputFormatters: [PhMobileFormatter()],
               validator: _validateMobile,
-              decoration: fieldDecoration('+63 9XX XXX XXXX'),
+              decoration: fieldDecoration('09XX XXX XXXX'),
             ),
             const SizedBox(height: 16),
             const FieldLabel('Password'),

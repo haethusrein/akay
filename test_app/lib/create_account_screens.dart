@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 
 import 'screens/sign_in_screen.dart';
 import 'main.dart';
+import 'screens/sign_in_screen.dart';
 
 // ---------- Extra colors used only by these screens ----------
 const kAmber = Color(0xFFF4C152);
@@ -29,6 +30,41 @@ void showComingSoon(BuildContext context, String message) {
     ..showSnackBar(SnackBar(content: Text(message)));
 }
 
+/// Formats a Philippine mobile number as you type: 09XX XXX XXXX.
+/// Keeps only digits, stops at 11 digits, and adds the spaces itself.
+/// A pasted "+63 912 345 6789" is converted to 0912 345 6789.
+class PhMobileFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    var d = newValue.text.replaceAll(RegExp(r'\D'), '');
+    if (d.length >= 12 && d.startsWith('63')) d = '0${d.substring(2)}';
+    if (d.length > 11) d = d.substring(0, 11);
+
+    final out = StringBuffer();
+    for (var i = 0; i < d.length; i++) {
+      if (i == 4 || i == 7) out.write(' '); // 0912 345 6789
+      out.write(d[i]);
+    }
+    final text = out.toString();
+    return TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
+  }
+}
+
+/// Valid = exactly 11 digits starting with 09.
+String? validatePhMobile(String? value) {
+  final digits = (value ?? '').replaceAll(RegExp(r'\D'), '');
+  if (digits.length != 11 || !digits.startsWith('09')) {
+    return 'Enter a valid mobile number, e.g. 0912 345 6789';
+  }
+  return null;
+}
+
 // ============================================================
 // Screen 1: Welcome
 // ============================================================
@@ -38,6 +74,7 @@ class WelcomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AuthScaffold(
+      compact: false, // big green intro only on this first screen
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -129,19 +166,6 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     super.dispose();
   }
 
-  String? _validateMobile(String? value) {
-    var digits = (value ?? '').replaceAll(RegExp(r'\D'), '');
-    if (digits.startsWith('63')) {
-      digits = digits.substring(2);
-    } else if (digits.startsWith('0')) {
-      digits = digits.substring(1);
-    }
-    if (digits.length != 10 || !digits.startsWith('9')) {
-      return 'Enter a valid mobile number, e.g. +63 912 345 6789';
-    }
-    return null;
-  }
-
   String? _validatePassword(String? value) {
     if (value == null || value.isEmpty) return 'Enter your password';
     if (value.length < 8) return 'Use at least 8 characters';
@@ -175,16 +199,11 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const BackLink(),
-            const SizedBox(height: 12),
+            const SizedBox(height: 4),
             const Text('CREATE YOUR ACCOUNT', style: kSmallLabel),
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
             const Text('How will you use AKAY?', style: kAuthTitle),
-            const SizedBox(height: 8),
-            const Text(
-              'Your role determines the information and tools available to you.',
-              style: TextStyle(fontSize: 14, color: kTextGrey, height: 1.45),
-            ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 14),
             RoleOption(
               icon: Icons.home_outlined,
               title: 'Resident',
@@ -200,14 +219,15 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
               selected: _role == UserRole.respondent,
               onTap: () => setState(() => _role = UserRole.respondent),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 14),
             const FieldLabel('Mobile number'),
             TextFormField(
               controller: _mobileController,
               keyboardType: TextInputType.phone,
               textInputAction: TextInputAction.next,
-              validator: _validateMobile,
-              decoration: fieldDecoration('+63 9XX XXX XXXX'),
+              inputFormatters: [PhMobileFormatter()],
+              validator: validatePhMobile,
+              decoration: fieldDecoration('09XX XXX XXXX'),
             ),
             const SizedBox(height: 16),
             const FieldLabel('Password'),
@@ -232,7 +252,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                 ),
               ),
             ),
-            const SizedBox(height: 22),
+            const SizedBox(height: 18),
             PrimaryButton(label: 'Continue', onPressed: _continue),
           ],
         ),
@@ -454,27 +474,16 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
 
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
-  bool _isVerifying = false;
 
   @override
   void initState() {
     super.initState();
-    _controller.addListener(_onCodeChanged);
-    _focusNode.addListener(_onFocusChanged);
-  }
-
-  void _onCodeChanged() {
-    if (mounted) setState(() {});
-  }
-
-  void _onFocusChanged() {
-    if (mounted) setState(() {});
+    _controller.addListener(() => setState(() {}));
+    _focusNode.addListener(() => setState(() {}));
   }
 
   @override
   void dispose() {
-    _controller.removeListener(_onCodeChanged);
-    _focusNode.removeListener(_onFocusChanged);
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -483,14 +492,8 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
   bool get _complete => _controller.text.length == _codeLength;
 
   Future<void> _verify() async {
-    if (!_complete || _isVerifying) return;
-
-    setState(() => _isVerifying = true);
-
     try {
-      // This call checks the code against Firestore.
       await AkayBackend.verifyCode(_controller.text);
-      final isResponder = await AkayBackend.isRespondent();
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(
@@ -500,10 +503,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
         (route) => false,
       );
     } catch (e) {
-      if (!mounted) return;
-
-      setState(() => _isVerifying = false);
-      showComingSoon(context, AkayBackend.friendlyError(e));
+      if (mounted) showComingSoon(context, AkayBackend.friendlyError(e));
     }
   }
 
@@ -576,30 +576,29 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFFF2F8F5),
+                color: kLightGreen,
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: kBorder),
               ),
               child: const Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.info_outline, size: 18, color: kGreen),
+                  Icon(Icons.check, size: 18, color: kGreen),
                   SizedBox(width: 10),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Six digits entered',
+                          'Registry match found',
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w700,
-                            color: kTextDark,
+                            color: kGreen,
                           ),
                         ),
                         SizedBox(height: 2),
                         Text(
-                          'Tap Verify code to check it. The code is not verified yet.',
+                          'Your account will receive a verified badge.',
                           style: kGreyText,
                         ),
                       ],
@@ -611,14 +610,15 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
             const SizedBox(height: 18),
           ],
           PrimaryButton(
-            label: _isVerifying ? 'Checking code...' : 'Verify code',
-            onPressed: _complete && !_isVerifying ? _verify : null,
+            label: 'Verify and open home',
+            onPressed: _complete ? _verify : null,
           ),
         ],
       ),
     );
   }
 }
+
 // ============================================================
 // Shared building blocks
 // ============================================================
@@ -632,7 +632,11 @@ const kAuthTitle = TextStyle(
 
 class AuthScaffold extends StatelessWidget {
   final Widget child;
-  const AuthScaffold({super.key, required this.child});
+
+  /// true  = small green header (forms, so nobody has to scroll)
+  /// false = big green intro (Welcome screen)
+  final bool compact;
+  const AuthScaffold({super.key, required this.child, this.compact = true});
 
   @override
   Widget build(BuildContext context) {
@@ -641,12 +645,12 @@ class AuthScaffold extends StatelessWidget {
       body: SingleChildScrollView(
         child: Column(
           children: [
-            const AuthHeader(),
+            AuthHeader(compact: compact),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 28, 20, 32),
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(28),
@@ -670,18 +674,17 @@ class AuthScaffold extends StatelessWidget {
 }
 
 class AuthHeader extends StatelessWidget {
-  const AuthHeader({super.key});
+  final bool compact;
+  const AuthHeader({super.key, this.compact = true});
 
   @override
   Widget build(BuildContext context) {
+    final top = MediaQuery.of(context).padding.top;
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.fromLTRB(
-        24,
-        MediaQuery.of(context).padding.top + 24,
-        24,
-        36,
-      ),
+      padding: compact
+          ? EdgeInsets.fromLTRB(20, top + 12, 20, 18)
+          : EdgeInsets.fromLTRB(24, top + 24, 24, 36),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topRight,
@@ -689,77 +692,117 @@ class AuthHeader extends StatelessWidget {
           colors: [kHeaderTop, kHeaderBottom],
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2F6B59),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(
-                  Icons.keyboard_arrow_up_rounded,
-                  color: kAmber,
-                  size: 34,
-                ),
-              ),
-              const SizedBox(width: 12),
-              const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'AKAY',
-                    style: TextStyle(
-                      fontSize: 18,
-                      letterSpacing: 2,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                  ),
-                  Text(
-                    'Community response',
-                    style: TextStyle(fontSize: 12, color: Color(0xCCFFFFFF)),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 36),
-          const Text(
-            'GUIDED HELP WHEN IT MATTERS MOST',
-            style: TextStyle(
-              fontSize: 12,
-              letterSpacing: 1.2,
-              fontWeight: FontWeight.w700,
-              color: kAmber,
-            ),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Sa oras ng sakuna, may\naakay sa iyo.',
-            style: TextStyle(
-              fontSize: 34,
-              height: 1.1,
-              fontWeight: FontWeight.w400,
-              letterSpacing: -0.5,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'Connect vulnerable households with verified community responders during floods and emergencies.',
-            style: TextStyle(
-              fontSize: 16,
-              height: 1.5,
-              color: Color(0xCCFFFFFF),
-            ),
-          ),
-        ],
+      child: compact ? _small() : _big(),
+    );
+  }
+
+  // Logo + "AKAY" in one row. Same logo box for both sizes.
+  Widget _logo({required double box, required double icon}) {
+    return Container(
+      width: box,
+      height: box,
+      decoration: BoxDecoration(
+        color: const Color(0xFF2F6B59),
+        borderRadius: BorderRadius.circular(box * 0.27),
       ),
+      child: Icon(Icons.keyboard_arrow_up_rounded, color: kAmber, size: icon),
+    );
+  }
+
+  // Small: logo, AKAY and one line of tagline.
+  Widget _small() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _logo(box: 36, icon: 28),
+            const SizedBox(width: 10),
+            const Text(
+              'AKAY',
+              style: TextStyle(
+                fontSize: 17,
+                letterSpacing: 2,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'Sa oras ng sakuna, may aakay sa iyo.',
+          style: TextStyle(
+            fontSize: 21,
+            height: 1.15,
+            fontWeight: FontWeight.w400,
+            color: Colors.white,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Big: the original full intro for the Welcome screen.
+  Widget _big() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _logo(box: 44, icon: 34),
+            const SizedBox(width: 12),
+            const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'AKAY',
+                  style: TextStyle(
+                    fontSize: 18,
+                    letterSpacing: 2,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+                Text(
+                  'Community response',
+                  style: TextStyle(fontSize: 12, color: Color(0xCCFFFFFF)),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 36),
+        const Text(
+          'GUIDED HELP WHEN IT MATTERS MOST',
+          style: TextStyle(
+            fontSize: 12,
+            letterSpacing: 1.2,
+            fontWeight: FontWeight.w700,
+            color: kAmber,
+          ),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'Sa oras ng sakuna, may\naakay sa iyo.',
+          style: TextStyle(
+            fontSize: 34,
+            height: 1.1,
+            fontWeight: FontWeight.w400,
+            letterSpacing: -0.5,
+            color: Colors.white,
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'Connect vulnerable households with verified community responders during floods and emergencies.',
+          style: TextStyle(
+            fontSize: 16,
+            height: 1.5,
+            color: Color(0xCCFFFFFF),
+          ),
+        ),
+      ],
     );
   }
 }
