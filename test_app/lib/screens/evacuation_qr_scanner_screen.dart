@@ -21,7 +21,6 @@ class _EvacuationQrScannerScreenState
   );
 
   bool _processing = false;
-  bool _finished = false;
 
   @override
   void dispose() {
@@ -30,23 +29,25 @@ class _EvacuationQrScannerScreenState
   }
 
   Future<void> _onDetect(BarcodeCapture capture) async {
-    if (_processing || _finished) return;
+    if (_processing) return;
 
-    final String? value = capture.barcodes
-        .map((barcode) => barcode.rawValue)
-        .firstWhere(
-          (rawValue) => rawValue != null && rawValue.isNotEmpty,
-          orElse: () => null,
-        );
+    String? value;
+    for (final barcode in capture.barcodes) {
+      final rawValue = barcode.rawValue;
+      if (rawValue != null && rawValue.isNotEmpty) {
+        value = rawValue;
+        break;
+      }
+    }
 
     if (value == null) return;
 
-    if (value != evacuationDemoQrPayload) {
-      setState(() => _processing = true);
-      await _controller.stop();
-      if (!mounted) return;
+    setState(() => _processing = true);
+    await _controller.stop();
+    if (!mounted) return;
 
-      final shouldResume = await showDialog<bool>(
+    if (value != evacuationDemoQrPayload) {
+      final scanAgain = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('QR code not recognized'),
@@ -67,7 +68,8 @@ class _EvacuationQrScannerScreenState
       );
 
       if (!mounted) return;
-      if (shouldResume == true) {
+
+      if (scanAgain == true) {
         setState(() => _processing = false);
         await _controller.start();
       } else {
@@ -75,10 +77,6 @@ class _EvacuationQrScannerScreenState
       }
       return;
     }
-
-    setState(() => _processing = true);
-    await _controller.stop();
-    if (!mounted) return;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -111,7 +109,6 @@ class _EvacuationQrScannerScreenState
     try {
       await AkayBackend.setEvacuationStatus('evacuated');
       if (!mounted) return;
-      setState(() => _finished = true);
       Navigator.of(context).pop(true);
     } catch (error) {
       if (!mounted) return;
@@ -157,7 +154,8 @@ class _EvacuationQrScannerScreenState
             child: StatusBanner(
               tone: BannerTone.warning,
               icon: Icons.warning_amber_rounded,
-              message: 'Check that the correct account is signed in before confirming.',
+              message:
+                  'Check that the correct account is signed in before confirming.',
             ),
           ),
         ],

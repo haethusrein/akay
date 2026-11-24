@@ -24,10 +24,10 @@ class AdminEvacuationQrScreen extends StatelessWidget {
                 'A signed-in user can scan this code to set their own status to evacuated.',
           ),
           const SizedBox(height: 20),
-          const AppCard(
+          AppCard(
             child: Center(
               child: Padding(
-                padding: EdgeInsets.all(12),
+                padding: const EdgeInsets.all(12),
                 child: QrImageView(
                   data: evacuationDemoQrPayload,
                   version: QrVersions.auto,

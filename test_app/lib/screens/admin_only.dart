@@ -23,12 +23,14 @@
 // ------------------------------------------------------------
 
 import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'admin_evacuation_qr_screen.dart';
+
 import '../akay_backend.dart';
 import '../main.dart'; // colors and text styles
+import 'admin_evacuation_qr_screen.dart';
 import 'screen_widgets.dart'; // StatusBanner, confirmDialog, requestTypeLabel, requestTypeIcon
 
 // ============================================================
@@ -102,6 +104,7 @@ class _Tag extends StatelessWidget {
   final String text;
   final Color bg;
   final Color fg;
+
   const _Tag(this.text, {this.bg = kLightGreen, this.fg = kGreen});
 
   @override
@@ -122,6 +125,7 @@ class _Tag extends StatelessWidget {
 
 class _AdminCard extends StatelessWidget {
   final Widget child;
+
   const _AdminCard({required this.child});
 
   @override
@@ -142,6 +146,7 @@ class _AdminCard extends StatelessWidget {
 
 class _SectionLabel extends StatelessWidget {
   final String text;
+
   const _SectionLabel(this.text);
 
   @override
@@ -169,8 +174,11 @@ class AdminOnlyScreen extends StatelessWidget {
           stream: AkayBackend.myProfile(),
           builder: (context, snapshot) {
             if (snapshot.hasError) {
-              return _Denied(message: AkayBackend.friendlyError(snapshot.error!));
+              return _Denied(
+                message: AkayBackend.friendlyError(snapshot.error!),
+              );
             }
+
             final p = snapshot.data?.data();
             if (p == null) {
               if (snapshot.connectionState == ConnectionState.waiting) {
@@ -180,6 +188,7 @@ class AdminOnlyScreen extends StatelessWidget {
               }
               return const _Denied();
             }
+
             if (!AkayBackend.isAdminProfile(p)) return const _Denied();
             return const _AdminConsole();
           },
@@ -191,6 +200,7 @@ class AdminOnlyScreen extends StatelessWidget {
 
 class _Denied extends StatelessWidget {
   final String message;
+
   const _Denied({this.message = 'Access denied. Admin only.'});
 
   @override
@@ -213,12 +223,13 @@ class _Denied extends StatelessWidget {
 }
 
 // ============================================================
-// Console: Pins | Accounts | 911 calls | Error log
+// Console: Pins | Accounts | 911 calls | Error log | Evacuation QR
 // ============================================================
 
 class _PinOptions {
   final String role;
   final String? custom;
+
   const _PinOptions(this.role, this.custom);
 }
 
@@ -240,8 +251,8 @@ class _AdminConsoleState extends State<_AdminConsole> {
   Object? _pinsError;
 
   bool _autoPins = true;
-  final Set<String> _issuing = {}; // accounts a pin is being created for right now
-  final Set<String> _attempted = {}; // accounts the auto mode already tried this session
+  final Set<String> _issuing = {};
+  final Set<String> _attempted = {};
 
   // Auto mode only handles accounts created in the last hour, so old test accounts
   // do not all get pins the moment this screen opens.
@@ -250,6 +261,7 @@ class _AdminConsoleState extends State<_AdminConsole> {
   @override
   void initState() {
     super.initState();
+
     _usersSub = AkayBackend.adminUsers().listen(
       (list) {
         if (!mounted) return;
@@ -263,6 +275,7 @@ class _AdminConsoleState extends State<_AdminConsole> {
         if (mounted) setState(() => _usersError = e);
       },
     );
+
     _pinsSub = AkayBackend.adminPins().listen(
       (list) {
         if (!mounted) return;
@@ -276,6 +289,7 @@ class _AdminConsoleState extends State<_AdminConsole> {
         if (mounted) setState(() => _pinsError = e);
       },
     );
+
     // Refresh "12 min left" / "expired" labels.
     _tick = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
@@ -312,36 +326,45 @@ class _AdminConsoleState extends State<_AdminConsole> {
   /// New account -> pin, with no tap needed (while this screen is open).
   void _maybeAutoIssue() {
     if (!_autoPins) return;
+
     final users = _users;
     final pins = _pins;
     if (users == null || pins == null) return;
+
     final cutoff = DateTime.now().subtract(_autoWindow);
-    for (final u in users) {
-      if (!_isWaiting(u)) continue;
-      final id = u['id'] as String;
+    for (final user in users) {
+      if (!_isWaiting(user)) continue;
+
+      final id = user['id'] as String;
       if (_attempted.contains(id) || _issuing.contains(id)) continue;
-      final created = _dateOf(u['createdAt']);
+
+      final created = _dateOf(user['createdAt']);
       if (created == null || created.isBefore(cutoff)) continue;
-      if (_pinsFor(id).isNotEmpty) continue; // already has (or had) a pin
+      if (_pinsFor(id).isNotEmpty) continue;
+
       _attempted.add(id);
-      _issue(u, auto: true);
+      _issue(user, auto: true);
     }
   }
 
   Future<void> _issue(Map<String, dynamic> user, {bool auto = false}) async {
     final id = user['id'] as String;
     if (!_issuing.add(id)) return;
+
     if (mounted) setState(() {});
+
     try {
       // A new pin replaces any older pin of this account that nobody used.
       final old = _pinsFor(id)
-          .where((p) => p['used'] != true)
-          .map((p) => p['id'] as String)
+          .where((pin) => pin['used'] != true)
+          .map((pin) => pin['id'] as String)
           .toList();
+
       final pin = await AkayBackend.adminIssuePinForUser(
         user,
         replacePins: old,
       );
+
       _toast(
         auto
             ? 'New account ${user['mobile']}: pin $pin'
@@ -360,18 +383,23 @@ class _AdminConsoleState extends State<_AdminConsole> {
       context: context,
       builder: (_) => _PinOptionsDialog(demo: demo),
     );
+
     if (options == null || !mounted) return;
+
     try {
       final pin = await AkayBackend.adminCreatePin(
         role: options.role,
         demo: demo,
         customPin: options.custom,
       );
+
       if (!mounted) return;
+
       final who = options.role == 'respondent' ? 'responder' : 'resident';
       final life = demo
           ? '${AkayBackend.demoPinLifetime.inHours} hours'
           : '${AkayBackend.pinLifetime.inMinutes} minutes';
+
       await _showPin(
         pin,
         '${demo ? 'Demo pin' : 'Pin'} for a $who. Works once and expires in $life.',
@@ -425,7 +453,9 @@ class _AdminConsoleState extends State<_AdminConsole> {
       confirmLabel: 'Revoke',
       cancelLabel: 'Cancel',
     );
+
     if (!ok) return;
+
     try {
       await AkayBackend.adminRevokePin(pin);
       _toast('Pin revoked');
@@ -439,7 +469,7 @@ class _AdminConsoleState extends State<_AdminConsole> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -489,6 +519,7 @@ class _AdminConsoleState extends State<_AdminConsole> {
               Tab(text: 'Accounts'),
               Tab(text: '911 calls'),
               Tab(text: 'Error log'),
+              Tab(text: 'Evacuation QR'),
             ],
           ),
           const Divider(height: 1, color: kBorder),
@@ -499,6 +530,7 @@ class _AdminConsoleState extends State<_AdminConsole> {
                 _accountsTab(),
                 const _CallsTab(),
                 const _LogTab(),
+                const AdminEvacuationQrScreen(),
               ],
             ),
           ),
@@ -514,11 +546,13 @@ class _AdminConsoleState extends State<_AdminConsole> {
     if (err != null) {
       return ListView(padding: _tabPadding, children: [_loadError(err)]);
     }
+
     final users = _users;
     final pins = _pins;
     if (users == null || pins == null) {
       return const Center(child: CircularProgressIndicator(color: kGreen));
     }
+
     final waiting = users.where(_isWaiting).toList();
 
     return ListView(
@@ -535,11 +569,14 @@ class _AdminConsoleState extends State<_AdminConsole> {
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('Auto-generate a pin for each new account'),
-          subtitle: const Text('Works while this screen is open.', style: kGreyText),
+          subtitle: const Text(
+            'Works while this screen is open.',
+            style: kGreyText,
+          ),
           value: _autoPins,
-          onChanged: (v) {
-            setState(() => _autoPins = v);
-            if (v) _maybeAutoIssue();
+          onChanged: (value) {
+            setState(() => _autoPins = value);
+            if (value) _maybeAutoIssue();
           },
         ),
         Row(
@@ -573,12 +610,12 @@ class _AdminConsoleState extends State<_AdminConsole> {
         if (waiting.isEmpty)
           const Text('No accounts are waiting.', style: kGreyText)
         else
-          for (final u in waiting) _waitingRow(u),
+          for (final user in waiting) _waitingRow(user),
         const _SectionLabel('ALL PINS'),
         if (pins.isEmpty)
           const Text('No pins yet.', style: kGreyText)
         else
-          for (final p in pins) _pinCard(p, users),
+          for (final pin in pins) _pinCard(pin, users),
       ],
     );
   }
@@ -586,7 +623,7 @@ class _AdminConsoleState extends State<_AdminConsole> {
   Widget _waitingRow(Map<String, dynamic> user) {
     final id = user['id'] as String;
     final mine = _pinsFor(id);
-    final active = mine.where((p) => _stateOf(p) == _PinState.active).toList();
+    final active = mine.where((pin) => _stateOf(pin) == _PinState.active).toList();
     final busy = _issuing.contains(id);
 
     Widget trailing;
@@ -673,16 +710,20 @@ class _AdminConsoleState extends State<_AdminConsole> {
     final state = _stateOf(pin);
     final forMobile = pin['forMobile']?.toString();
     final usedBy = pin['usedBy']?.toString();
+
     String? usedByMobile;
     if (usedBy != null) {
-      for (final u in users) {
-        if (u['id'] == usedBy) usedByMobile = u['mobile']?.toString();
+      for (final user in users) {
+        if (user['id'] == usedBy) {
+          usedByMobile = user['mobile']?.toString();
+        }
       }
     }
 
     late final String stateText;
     late final Color stateBg;
     late final Color stateFg;
+
     switch (state) {
       case _PinState.active:
         stateText = 'Active';
@@ -744,7 +785,10 @@ class _AdminConsoleState extends State<_AdminConsole> {
                 const SizedBox(height: 6),
                 Text(
                   [
-                    if (forMobile != null) 'For $forMobile' else 'Not tied to an account',
+                    if (forMobile != null)
+                      'For $forMobile'
+                    else
+                      'Not tied to an account',
                     if (detail.isNotEmpty) detail,
                   ].join(' · '),
                   style: kGreyText,
@@ -776,14 +820,16 @@ class _AdminConsoleState extends State<_AdminConsole> {
     if (err != null) {
       return ListView(padding: _tabPadding, children: [_loadError(err)]);
     }
+
     final users = _users;
     if (users == null) {
       return const Center(child: CircularProgressIndicator(color: kGreen));
     }
-    final residents = users.where((u) => u['role'] == 'resident').length;
-    final responders = users.where((u) => u['role'] == 'respondent').length;
+
+    final residents = users.where((user) => user['role'] == 'resident').length;
+    final responders = users.where((user) => user['role'] == 'respondent').length;
     final verified =
-        users.where((u) => !_isAdminUser(u) && u['verified'] == true).length;
+        users.where((user) => !_isAdminUser(user) && user['verified'] == true).length;
     final waiting = users.where(_isWaiting).length;
 
     return ListView(
@@ -808,7 +854,7 @@ class _AdminConsoleState extends State<_AdminConsole> {
         if (users.isEmpty)
           const Text('No accounts yet.', style: kGreyText)
         else
-          for (final u in users) _accountRow(u),
+          for (final user in users) _accountRow(user),
       ],
     );
   }
@@ -817,6 +863,7 @@ class _AdminConsoleState extends State<_AdminConsole> {
     final isAdmin = _isAdminUser(user);
     final isResponder = user['role'] == 'respondent';
     final verified = user['verified'] == true;
+
     return _AdminCard(
       child: Row(
         children: [
@@ -885,6 +932,7 @@ class _AdminConsoleState extends State<_AdminConsole> {
 
 class _PinOptionsDialog extends StatefulWidget {
   final bool demo;
+
   const _PinOptionsDialog({required this.demo});
 
   @override
@@ -908,7 +956,9 @@ class _PinOptionsDialogState extends State<_PinOptionsDialog> {
       setState(() => _error = 'Use exactly 6 digits');
       return;
     }
-    Navigator.of(context).pop(_PinOptions(_role, text.isEmpty ? null : text));
+    Navigator.of(context).pop(
+      _PinOptions(_role, text.isEmpty ? null : text),
+    );
   }
 
   @override
@@ -938,7 +988,8 @@ class _PinOptionsDialogState extends State<_PinOptionsDialog> {
               ),
             ],
             selected: {_role},
-            onSelectionChanged: (s) => setState(() => _role = s.first),
+            onSelectionChanged: (selection) =>
+                setState(() => _role = selection.first),
           ),
           if (widget.demo) ...[
             const SizedBox(height: 14),
@@ -962,7 +1013,10 @@ class _PinOptionsDialogState extends State<_PinOptionsDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        TextButton(onPressed: _submit, child: const Text('Create')),
+        TextButton(
+          onPressed: _submit,
+          child: const Text('Create'),
+        ),
       ],
     );
   }
@@ -1014,8 +1068,8 @@ class _CallsTabState extends State<_CallsTab> {
     }
   }
 
-  Future<void> _accept(Map<String, dynamic> r) async {
-    final id = r['id'] as String;
+  Future<void> _accept(Map<String, dynamic> request) async {
+    final id = request['id'] as String;
     final ok = await confirmDialog(
       context,
       title: 'Accept this 911 call?',
@@ -1024,27 +1078,32 @@ class _CallsTabState extends State<_CallsTab> {
       confirmLabel: 'Accept',
       cancelLabel: 'Cancel',
     );
+
     if (!ok || !mounted) return;
+
     await _run(id, () => AkayBackend.acceptRequest(id), 'Call accepted');
   }
 
-  Future<void> _resolve(Map<String, dynamic> r) async {
-    final id = r['id'] as String;
+  Future<void> _resolve(Map<String, dynamic> request) async {
+    final id = request['id'] as String;
     await _run(id, () => AkayBackend.resolveRequest(id), 'Marked as resolved');
   }
 
-  Future<void> _release(Map<String, dynamic> r) async {
-    final id = r['id'] as String;
+  Future<void> _release(Map<String, dynamic> request) async {
+    final id = request['id'] as String;
     await _run(id, () => AkayBackend.releaseRequest(id), 'Call released');
   }
 
-  Widget _requestCard(Map<String, dynamic> r, {required bool accepted}) {
-    final id = r['id'] as String;
-    final type = (r['type'] ?? 'other').toString();
-    final barangay = (r['barangay'] ?? 'Unknown barangay').toString();
+  Widget _requestCard(
+    Map<String, dynamic> request, {
+    required bool accepted,
+  }) {
+    final id = request['id'] as String;
+    final type = (request['type'] ?? 'other').toString();
+    final barangay = (request['barangay'] ?? 'Unknown barangay').toString();
     final when = accepted
-        ? 'Accepted ${_ago(_dateOf(r['matchedAt']))}'
-        : 'Sent ${_ago(_dateOf(r['createdAt']))}';
+        ? 'Accepted ${_ago(_dateOf(request['matchedAt']))}'
+        : 'Sent ${_ago(_dateOf(request['createdAt']))}';
     final busy = _busyId == id;
 
     return _AdminCard(
@@ -1088,14 +1147,14 @@ class _CallsTabState extends State<_CallsTab> {
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: busy ? null : () => _release(r),
+                    onPressed: busy ? null : () => _release(request),
                     child: const Text('Release'),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: FilledButton(
-                    onPressed: busy ? null : () => _resolve(r),
+                    onPressed: busy ? null : () => _resolve(request),
                     style: FilledButton.styleFrom(backgroundColor: kGreen),
                     child: const Text('Mark resolved'),
                   ),
@@ -1106,7 +1165,7 @@ class _CallsTabState extends State<_CallsTab> {
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: busy ? null : () => _accept(r),
+                onPressed: busy ? null : () => _accept(request),
                 style: FilledButton.styleFrom(backgroundColor: kGreen),
                 child: busy
                     ? const SizedBox(
@@ -1149,13 +1208,16 @@ class _CallsTabState extends State<_CallsTab> {
                 child: Center(child: CircularProgressIndicator(color: kGreen)),
               );
             }
+
             final list = snapshot.data!;
             if (list.isEmpty) {
               return const Text('No pending 911 calls.', style: kGreyText);
             }
+
             return Column(
               children: [
-                for (final r in list) _requestCard(r, accepted: false),
+                for (final request in list)
+                  _requestCard(request, accepted: false),
               ],
             );
           },
@@ -1171,14 +1233,18 @@ class _CallsTabState extends State<_CallsTab> {
                 child: Center(child: CircularProgressIndicator(color: kGreen)),
               );
             }
-            final list =
-                snapshot.data!.where((r) => r['status'] == 'matched').toList();
+
+            final list = snapshot.data!
+                .where((request) => request['status'] == 'matched')
+                .toList();
             if (list.isEmpty) {
               return const Text('Nothing accepted right now.', style: kGreyText);
             }
+
             return Column(
               children: [
-                for (final r in list) _requestCard(r, accepted: true),
+                for (final request in list)
+                  _requestCard(request, accepted: true),
               ],
             );
           },
@@ -1238,6 +1304,7 @@ class _LogTabState extends State<_LogTab> {
       cancelLabel: 'Cancel',
     );
     if (!ok) return;
+
     try {
       await AkayBackend.adminClearErrorLogs(_ids);
       _toast('Error log cleared');
@@ -1292,7 +1359,11 @@ class _LogTabState extends State<_LogTab> {
                 onTap: () => _delete(id),
                 child: const Padding(
                   padding: EdgeInsets.all(4),
-                  child: Icon(Icons.delete_outline, size: 20, color: kTextGrey),
+                  child: Icon(
+                    Icons.delete_outline,
+                    size: 20,
+                    color: kTextGrey,
+                  ),
                 ),
               ),
             ],
@@ -1300,11 +1371,17 @@ class _LogTabState extends State<_LogTab> {
           const SizedBox(height: 8),
           SelectableText(
             message,
-            style: const TextStyle(fontSize: 13, height: 1.4, color: kTextDark),
+            style: const TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: kTextDark,
+            ),
           ),
           if (stack != null && stack.isNotEmpty)
             Theme(
-              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              data: Theme.of(context).copyWith(
+                dividerColor: Colors.transparent,
+              ),
               child: ExpansionTile(
                 tilePadding: EdgeInsets.zero,
                 childrenPadding: EdgeInsets.zero,
@@ -1385,12 +1462,17 @@ class _LogTabState extends State<_LogTab> {
                 child: Center(child: CircularProgressIndicator(color: kGreen)),
               );
             }
+
             final list = snapshot.data!;
-            _ids = list.map((l) => l['id'] as String).toList();
+            _ids = list.map((log) => log['id'] as String).toList();
+
             if (list.isEmpty) {
               return const Text('No errors logged.', style: kGreyText);
             }
-            return Column(children: [for (final l in list) _logCard(l)]);
+
+            return Column(
+              children: [for (final log in list) _logCard(log)],
+            );
           },
         ),
       ],
