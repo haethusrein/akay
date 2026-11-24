@@ -42,6 +42,65 @@ class ProfileScreen extends StatelessWidget {
     }
   }
 
+    Future<void> _deactivateAccount(BuildContext context) async {
+    final passwordController = TextEditingController();
+
+    final password = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Deactivate AKAY account?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'You will no longer be able to sign in to this account. '
+              'Your Firebase account and stored data will remain.',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Confirm your password',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(
+              passwordController.text,
+            ),
+            child: const Text('Deactivate'),
+          ),
+        ],
+      ),
+    );
+
+    passwordController.dispose();
+    if (password == null || password.isEmpty || !context.mounted) return;
+
+    try {
+      await AkayBackend.deactivateAccount(password: password);
+      if (!context.mounted) return;
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+        (route) => false,
+      );
+    } catch (error) {
+      if (context.mounted) {
+        showComingSoon(context, AkayBackend.friendlyError(error));
+      }
+    }
+  }
+
   void _openVerification(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const VerifyCodeScreen()),
@@ -244,6 +303,12 @@ class ProfileScreen extends StatelessWidget {
             label: 'Log out',
             icon: Icons.logout,
             onPressed: () => _logOut(context),
+          ),
+                    const SizedBox(height: 10),
+          OutlineAction(
+            label: 'Deactivate account',
+            icon: Icons.person_off_outlined,
+            onPressed: () => _deactivateAccount(context),
           ),
         ],
       ),

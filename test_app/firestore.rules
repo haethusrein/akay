@@ -2,9 +2,29 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn() { return request.auth != null; }
-    function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
-    function userData(uid) { return get(/databases/$(database)/documents/users/$(uid)).data; }
+    function authPresent() { return request.auth != null; }
+    function userData(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+    function accountIsActive(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid))
+        && userData(uid).get('accountStatus', 'active') == 'active';
+    }
+    // Existing Auth sessions are denied Firestore access as soon as the
+    // account profile is marked deleted. Old profiles without accountStatus
+    // remain active for backward compatibility.
+    function signedIn() {
+      return authPresent() && accountIsActive(request.auth.uid);
+    }
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+    // A client timestamp is accepted only near the chosen 90-day expiry.
+    function is90DayExpiry(value) {
+      return value is timestamp
+        && value >= request.time + duration.value(89, 'd')
+        && value <= request.time + duration.value(91, 'd');
+    }
     function isVerifiedResponder() {
       return signedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
@@ -30,28 +50,50 @@ service cloud.firestore {
 
     // ---------- accounts ----------
     match /users/{uid} {
-      allow read: if isSelf(uid) || isAdmin();
-      // sign-up: you can only create your own profile, and never as already verified
-      allow create: if isSelf(uid)
-        && request.resource.data.keys().hasOnly(['mobile', 'role', 'verified', 'createdAt'])
+      // Allow reading one's own status after Auth sign-in so signIn() can
+      // reject a deactivated profile. This grants no access to other records.
+      allow read: if (authPresent() && request.auth.uid == uid) || isAdmin();
+
+      // Sign-up profile. accountStatus is optional here for compatibility
+      // with older test fixtures; new app accounts set it to "active".
+      allow create: if authPresent()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['mobile', 'role', 'verified', 'createdAt', 'accountStatus'])
         && request.resource.data.keys().hasAll(['mobile', 'role', 'verified', 'createdAt'])
         && request.resource.data.mobile is string
         && request.resource.data.mobile.matches('^\\\\+639[0-9]{9}$')
         && request.resource.data.role in ['resident', 'respondent']
         && request.resource.data.verified == false
+        && (!('accountStatus' in request.resource.data)
+            || request.resource.data.accountStatus == 'active')
         && request.resource.data.createdAt == request.time;
-      // the ONLY allowed update: becoming verified with an unused code of your own role
-      allow update: if isSelf(uid)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['verified', 'verifiedWith'])
-        && resource.data.verified == false
-        && request.resource.data.verified == true
-        && request.resource.data.verifiedWith is string
-        && get(codePath(request.resource.data.verifiedWith)).data.used == false
-        && get(codePath(request.resource.data.verifiedWith)).data.role == resource.data.role
-        && (!('forUid' in get(codePath(request.resource.data.verifiedWith)).data)
-            || get(codePath(request.resource.data.verifiedWith)).data.forUid == request.auth.uid)
-        && getAfter(codePath(request.resource.data.verifiedWith)).data.used == true
-        && getAfter(codePath(request.resource.data.verifiedWith)).data.usedBy == request.auth.uid;
+
+      // User may either verify using a valid code or deactivate their own
+      // currently active account. Deactivation changes only these fields.
+      allow update: if (
+          isSelf(uid)
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['verified', 'verifiedWith'])
+          && resource.data.verified == false
+          && request.resource.data.verified == true
+          && request.resource.data.verifiedWith is string
+          && get(codePath(request.resource.data.verifiedWith)).data.used == false
+          && get(codePath(request.resource.data.verifiedWith)).data.role == resource.data.role
+          && (!('forUid' in get(codePath(request.resource.data.verifiedWith)).data)
+              || get(codePath(request.resource.data.verifiedWith)).data.forUid == request.auth.uid)
+          && getAfter(codePath(request.resource.data.verifiedWith)).data.used == true
+          && getAfter(codePath(request.resource.data.verifiedWith)).data.usedBy == request.auth.uid
+        ) || (
+          authPresent()
+          && request.auth.uid == uid
+          && resource.data.get('accountStatus', 'active') == 'active'
+          && request.resource.data.accountStatus == 'deleted'
+          && request.resource.data.deletedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['accountStatus', 'deletedAt'])
+        );
+
+      // Account data remains for retention/audit purposes.
       allow delete: if false;
     }
 
@@ -108,7 +150,8 @@ service cloud.firestore {
         && request.resource.data.notes is list
         && request.resource.data.notes.size() <= 20
         && request.resource.data.updatedAt == request.time;
-      allow delete: if false;
+      allow delete: if isSelf(uid)
+        && !exists(/databases/$(database)/documents/activeRequests/$(uid));
     }
 
     // Responders switch "online" and share a coarse (~1 km) position (counted in Community status).
@@ -166,7 +209,9 @@ service cloud.firestore {
           && resource.data.status in ['pending', 'matched']
           && request.resource.data.status == 'cancelled'
           && request.resource.data.updatedAt == request.time
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']))
+          && is90DayExpiry(request.resource.data.expiresAt)
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'updatedAt', 'expiresAt']))
         // verified responder accepts (only while still pending => only one can win)
         // must use their own profile number, cannot accept their own request, and must take the one active-job slot
         || ((isVerifiedResponder() || isAdmin())
@@ -208,9 +253,14 @@ service cloud.firestore {
           && request.resource.data.status == 'resolved'
           && request.resource.data.resolvedAt == request.time
           && request.resource.data.updatedAt == request.time
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'resolvedAt', 'updatedAt']))
+          && is90DayExpiry(request.resource.data.expiresAt)
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'resolvedAt', 'updatedAt', 'expiresAt']))
       );
-      allow delete: if false;
+      // Owners may remove only their own completed request history.
+      allow delete: if signedIn()
+        && resource.data.userId == request.auth.uid
+        && resource.data.status in ['resolved', 'cancelled'];
     }
 
     // Exact location, address, description and household snapshot.
@@ -246,7 +296,23 @@ service cloud.firestore {
         && request.resource.data.household.notes.size() <= 20
         && request.resource.data.createdAt == request.time;
 
-      allow update, delete: if false;
+      // When the paired request becomes resolved/cancelled, only add the
+      // same 90-day expiration timestamp. The requester or assigned responder
+      // may perform the terminal transition.
+      allow update: if signedIn()
+        && (resource.data.userId == request.auth.uid
+            || reqNow(id).responderId == request.auth.uid)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['expiresAt'])
+        && is90DayExpiry(request.resource.data.expiresAt)
+        && reqAfter(id).status in ['resolved', 'cancelled']
+        && request.resource.data.expiresAt == reqAfter(id).expiresAt;
+
+      // Requester may delete exact location/household details only after
+      // the request is no longer active.
+      allow delete: if signedIn()
+        && resource.data.userId == request.auth.uid
+        && reqNow(id).status in ['resolved', 'cancelled'];
     }
 
     // One pointer per user with an active request; created with the request, deleted when it ends.
