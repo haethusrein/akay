@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
+import 'package:url_launcher/url_launcher.dart';
 import 'create_account_screens.dart';
 import 'akay_backend.dart';
 import 'firebase_options.dart';
@@ -115,7 +115,7 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 20),
           buildCommunityStatus(),
           const SizedBox(height: 16),
-          buildHotlineCard(),
+          buildHotlineCard(context),
           const SizedBox(height: 16),
         ],
       ),
@@ -397,66 +397,89 @@ Widget buildCommunityStatus() {
 
 // ---------- Hotline ----------
 
-Widget buildHotlineCard() {
-  return AppCard(
-    child: Column(
-      children: [
-        const Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            IconBox(
-              icon: Icons.phone_outlined,
-              bg: Color(0xFFFDE9E5),
-              color: kRed,
-              size: 46,
-            ),
-            SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('EMERGENCY HOTLINE', style: kSmallLabel),
-                  SizedBox(height: 6),
-                  Text(
-                    'Need to speak to someone?',
-                    style: TextStyle(fontSize: 16, color: kTextDark),
-                  ),
-                  SizedBox(height: 4),
-                  Text(
-                    'Call the Valencia City response desk directly.',
-                    style: kGreyText,
-                  ),
-                ],
+  Widget buildHotlineCard(BuildContext context) {
+    return AppCard(
+      child: Column(
+        children: [
+          const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              IconBox(
+                icon: Icons.phone_outlined,
+                bg: Color(0xFFFDE9E5),
+                color: kRed,
+                size: 46,
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        SizedBox(
-          width: double.infinity,
-          height: 46,
-          child: ElevatedButton(
-            onPressed: () {
-              // TODO: Open phone dialer.
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFDE9E5),
-              foregroundColor: kRed,
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('EMERGENCY CONTACT', style: kSmallLabel),
+                    SizedBox(height: 6),
+                    Text(
+                      'Need to speak to someone?',
+                      style: TextStyle(fontSize: 16, color: kTextDark),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Call your assigned responder, or the AKAY response desk.',
+                      style: kGreyText,
+                    ),
+                  ],
+                ),
               ),
-            ),
-            child: const Text(
-              'Call 911  >',
-              style: TextStyle(fontWeight: FontWeight.w600),
+            ],
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            height: 46,
+            child: ElevatedButton(
+              onPressed: () async {
+                try {
+                  final responderPhone =
+                      await AkayBackend.assignedResponderPhone();
+                  final phone =
+                      responderPhone ?? await AkayBackend.demoAdminPhone();
+
+                  final opened = await launchUrl(
+                    Uri(scheme: 'tel', path: phone),
+                  );
+
+                  if (!opened && context.mounted) {
+                    showComingSoon(
+                      context,
+                      'Could not open the phone dialer. Please try again.',
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    showComingSoon(
+                      context,
+                      AkayBackend.friendlyError(e),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFDE9E5),
+                foregroundColor: kRed,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: const Text(
+                'Call responder / desk  >',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
             ),
           ),
-        ),
-      ],
-    ),
-  );
-}
+        ],
+      ),
+    );
+  }
 
 // ============================================================
 // LIVE COMMUNITY STATUS CARD

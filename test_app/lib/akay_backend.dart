@@ -532,7 +532,42 @@ class AkayBackend {
       .map(_sorted);
 
   // ---------- responder side ----------
+  /// Returns the phone number of the responder who accepted this user's
+  /// current request, or null if there is no accepted request.
+  static Future<String?> assignedResponderPhone() async {
+    final requests = await myRequests().first;
 
+    for (final request in requests) {
+      if (request['status'] != 'matched') continue;
+
+      final phone = request['responderMobile'];
+      if (phone is String && phone.trim().isNotEmpty) {
+        return phone.trim();
+      }
+    }
+
+    return null;
+  }
+
+  /// Demo fallback number, stored in Firestore so it isn't hard-coded here.
+  ///
+  /// Document: config/emergencyContact
+  /// Field: adminPhone, stored in international format such as +639671670872
+  static Future<String> demoAdminPhone() async {
+    final document = await _db.doc('config/emergencyContact').get();
+    final value = document.data()?['adminPhone'];
+
+    if (value is! String) {
+      throw 'The demo response-desk number is not configured.';
+    }
+
+    final phone = value.trim();
+    if (!RegExp(r'^\+[1-9][0-9]{7,14}$').hasMatch(phone)) {
+      throw 'The demo response-desk number is not valid.';
+    }
+
+    return phone;
+  }
   /// Responder: go online/offline (shares a coarse ~1 km position for the "Responders online" count).
   static Future<void> setOnline(bool online) async {
     final data = <String, dynamic>{
