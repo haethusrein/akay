@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../akay_backend.dart';
-import '../create_account_screens.dart'; // WelcomeScreen, showComingSoon
+import '../create_account_screens.dart'; // WelcomeScreen, VerifyCodeScreen, showComingSoon
 import '../main.dart';
 import 'admin_only.dart';
 import 'akay_nav.dart';
@@ -14,7 +14,7 @@ import 'screen_widgets.dart';
 // ============================================================
 // AKAY - Profile tab
 // The Figma export has no Profile design yet, so this is a simple version
-// in the same style: account details + Log out.
+// in the same style: account details + verification + Log out.
 //
 // Backend used: AkayBackend.myProfile(), AkayBackend.signOut()
 // ============================================================
@@ -40,6 +40,12 @@ class ProfileScreen extends StatelessWidget {
     } catch (e) {
       if (context.mounted) showComingSoon(context, AkayBackend.friendlyError(e));
     }
+  }
+
+  void _openVerification(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const VerifyCodeScreen()),
+    );
   }
 
   @override
@@ -93,9 +99,14 @@ class ProfileScreen extends StatelessWidget {
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
                           decoration: BoxDecoration(
-                            color: verified ? kLightGreen : const Color(0xFFFFF3DC),
+                            color: verified
+                                ? kLightGreen
+                                : const Color(0xFFFFF3DC),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: Row(
@@ -103,7 +114,9 @@ class ProfileScreen extends StatelessWidget {
                               Icon(
                                 verified ? Icons.check : Icons.schedule,
                                 size: 14,
-                                color: verified ? kGreen : const Color(0xFF7A5A12),
+                                color: verified
+                                    ? kGreen
+                                    : const Color(0xFF7A5A12),
                               ),
                               const SizedBox(width: 4),
                               Text(
@@ -111,7 +124,9 @@ class ProfileScreen extends StatelessWidget {
                                 style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
-                                  color: verified ? kGreen : const Color(0xFF7A5A12),
+                                  color: verified
+                                      ? kGreen
+                                      : const Color(0xFF7A5A12),
                                 ),
                               ),
                             ],
@@ -124,7 +139,36 @@ class ProfileScreen extends StatelessWidget {
               );
             },
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
+          StreamBuilder(
+            stream: AkayBackend.myProfile(),
+            builder: (context, snapshot) {
+              final profile = snapshot.data?.data();
+              if (profile == null || profile['verified'] == true) {
+                return const SizedBox.shrink();
+              }
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const AppCard(
+                    child: Text(
+                      'Some account features require verification. '
+                      'Enter your verification code to unlock responder tools.',
+                      style: kGreyText,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlineAction(
+                    label: 'Enter verification code',
+                    icon: Icons.verified_user_outlined,
+                    onPressed: () => _openVerification(context),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              );
+            },
+          ),
           const Text('SAFETY TOOLS', style: kSmallLabel),
           const SizedBox(height: 10),
           const _ToolTile(
@@ -151,12 +195,17 @@ class ProfileScreen extends StatelessWidget {
             subtitle: 'What a neighbour sees when holding an SOS',
             page: RelayPhoneScreen(),
           ),
-          // Responder tools: shown to respondents (and while sample data is on).
+          // Responder tools require both the responder role and verification.
           StreamBuilder(
             stream: AkayBackend.myProfile(),
             builder: (context, snapshot) {
-              final isResponder = snapshot.data?.data()?['role'] == 'respondent';
-              if (!isResponder && !kShowSampleData) return const SizedBox.shrink();
+              final profile = snapshot.data?.data();
+              final isVerifiedResponder =
+                  profile?['role'] == 'respondent' &&
+                  profile?['verified'] == true;
+
+              if (!isVerifiedResponder) return const SizedBox.shrink();
+
               return const Column(
                 children: [
                   _ToolTile(
@@ -255,7 +304,11 @@ class _ToolTile extends StatelessWidget {
                     ],
                   ),
                 ),
-                const Icon(Icons.chevron_right, size: 20, color: kTextDark),
+                const Icon(
+                  Icons.chevron_right,
+                  size: 20,
+                  color: kTextDark,
+                ),
               ],
             ),
           ),
