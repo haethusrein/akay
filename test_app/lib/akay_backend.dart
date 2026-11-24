@@ -384,6 +384,10 @@ class AkayBackend {
   static Future<void> cancelRequest(String id) async {
     final me = uid!;
     final ref = _db.doc('requests/$id');
+    final expiresAt = Timestamp.fromDate(
+      DateTime.now().add(const Duration(days: 90)),
+    );
+
     await _db.runTransaction((transaction) async {
       final snapshot = await transaction.get(ref);
       final r = snapshot.data();
@@ -406,6 +410,10 @@ class AkayBackend {
       transaction.update(ref, {
         'status': 'cancelled',
         'updatedAt': FieldValue.serverTimestamp(),
+        'expiresAt': expiresAt,
+      });
+      transaction.update(_db.doc('requestDetails/$id'), {
+        'expiresAt': expiresAt,
       });
       if (r['status'] == 'pending') {
         transaction.delete(_db.doc('publicMarkers/$id'));
@@ -475,6 +483,10 @@ class AkayBackend {
   static Future<void> resolveRequest(String id) async {
     final me = uid!;
     final ref = _db.doc('requests/$id');
+    final expiresAt = Timestamp.fromDate(
+      DateTime.now().add(const Duration(days: 90)),
+    );
+
     await _db.runTransaction((transaction) async {
       final snapshot = await transaction.get(ref);
       final r = snapshot.data();
@@ -499,6 +511,10 @@ class AkayBackend {
         'status': 'resolved',
         'resolvedAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
+        'expiresAt': expiresAt,
+      });
+      transaction.update(_db.doc('requestDetails/$id'), {
+        'expiresAt': expiresAt,
       });
       transaction.set(
         _notifsOf(me).doc(),
