@@ -4,13 +4,9 @@ import 'screens/responder_list_screen.dart';
 // AKAY - Create account flow
 // ============================================================
 import 'dart:math' show min;
-
 import 'akay_backend.dart';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
-import 'screens/sign_in_screen.dart';
 import 'main.dart';
 import 'screens/sign_in_screen.dart';
 
@@ -493,7 +489,8 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
 
   Future<void> _verify() async {
     try {
-      await AkayBackend.verifyCode(_controller.text);
+     await AkayBackend.verifyCode(_controller.text);
+      final isResponder = await AkayBackend.isRespondent();
       if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(

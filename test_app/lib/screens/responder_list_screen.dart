@@ -46,55 +46,7 @@ class _ResponderListScreenState extends State<ResponderListScreen> {
 
   DateTime _lastUpdated = DateTime.now();
 
-  // Figma-style sample households, shown only while kShowSampleData is true
-  // and no real requests exist. They have no 'id', so nothing is sent.
-  static final List<RequestMap> _sample = [
-    {
-      'type': 'medical',
-      'status': 'pending',
-      'evacStatus': 'Still here',
-      'address': 'Purok 2',
-      'minutes': 12,
-      'lat': 7.9045,
-      'lng': 125.0928,
-      'household': {
-        'name': 'Reyes Household',
-        'members': 3,
-        'mobilityNeed': 'Bedridden',
-        'notes': ['Oxygen tank'],
-      },
-    },
-    {
-      'type': 'flood',
-      'status': 'pending',
-      'evacStatus': 'Request waiting',
-      'address': 'Purok 4',
-      'minutes': 8,
-      'lat': 7.9018,
-      'lng': 125.0952,
-      'household': {
-        'name': 'Santos Household',
-        'members': 4,
-        'mobilityNeed': 'Wheelchair',
-        'notes': ['2 seniors'],
-      },
-    },
-    {
-      'type': 'other',
-      'status': 'local',
-      'evacStatus': 'In transit',
-      'address': 'Purok 1',
-      'minutes': 4,
-      'lat': 7.9061,
-      'lng': 125.0904,
-      'household': {
-        'name': 'Cruz Household',
-        'members': 5,
-        'mobilityNeed': 'None',
-        'notes': ['Status waiting to sync'],
-      },
-    },
-  ];
+
 
   Future<void> _toggleOnline(bool value) async {
     try {
@@ -279,7 +231,7 @@ class _ResponderListScreenState extends State<ResponderListScreen> {
           final rawItems = snapshot.data ?? const <RequestMap>[];
           final usingSample =
               snapshot.hasData && rawItems.isEmpty && kShowSampleData;
-          final sourceItems = usingSample ? _sample : rawItems;
+          
 
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -387,7 +339,7 @@ class _ResponderListScreenState extends State<ResponderListScreen> {
                 )
               else
                 _HydratedRequestsBody(
-                  rawItems: sourceItems,
+                  rawItems: rawItems,
                   usingSample: usingSample,
                   showMap: _showMap,
                   onToggleMap: (mapMode) => setState(() => _showMap = mapMode),
