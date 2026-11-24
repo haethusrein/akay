@@ -68,6 +68,7 @@ class WelcomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AuthScaffold(
+      compact: false, // big green intro only on this first screen
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -622,7 +623,11 @@ const kAuthTitle = TextStyle(
 
 class AuthScaffold extends StatelessWidget {
   final Widget child;
-  const AuthScaffold({super.key, required this.child});
+
+  /// true  = small green header (forms, so nobody has to scroll)
+  /// false = big green intro (Welcome screen)
+  final bool compact;
+  const AuthScaffold({super.key, required this.child, this.compact = true});
 
   @override
   Widget build(BuildContext context) {
@@ -631,7 +636,7 @@ class AuthScaffold extends StatelessWidget {
       body: SingleChildScrollView(
         child: Column(
           children: [
-            const AuthHeader(),
+            AuthHeader(compact: compact),
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
               child: Container(
@@ -660,18 +665,17 @@ class AuthScaffold extends StatelessWidget {
 }
 
 class AuthHeader extends StatelessWidget {
-  const AuthHeader({super.key});
+  final bool compact;
+  const AuthHeader({super.key, this.compact = true});
 
   @override
   Widget build(BuildContext context) {
+    final top = MediaQuery.of(context).padding.top;
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.fromLTRB(
-        20,
-        MediaQuery.of(context).padding.top + 12,
-        20,
-        18,
-      ),
+      padding: compact
+          ? EdgeInsets.fromLTRB(20, top + 12, 20, 18)
+          : EdgeInsets.fromLTRB(24, top + 24, 24, 36),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topRight,
@@ -679,48 +683,117 @@ class AuthHeader extends StatelessWidget {
           colors: [kHeaderTop, kHeaderBottom],
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF2F6B59),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(
-                  Icons.keyboard_arrow_up_rounded,
-                  color: kAmber,
-                  size: 28,
-                ),
-              ),
-              const SizedBox(width: 10),
-              const Text(
-                'AKAY',
-                style: TextStyle(
-                  fontSize: 17,
-                  letterSpacing: 2,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Sa oras ng sakuna, may aakay sa iyo.',
-            style: TextStyle(
-              fontSize: 21,
-              height: 1.15,
-              fontWeight: FontWeight.w400,
-              color: Colors.white,
-            ),
-          ),
-        ],
+      child: compact ? _small() : _big(),
+    );
+  }
+
+  // Logo + "AKAY" in one row. Same logo box for both sizes.
+  Widget _logo({required double box, required double icon}) {
+    return Container(
+      width: box,
+      height: box,
+      decoration: BoxDecoration(
+        color: const Color(0xFF2F6B59),
+        borderRadius: BorderRadius.circular(box * 0.27),
       ),
+      child: Icon(Icons.keyboard_arrow_up_rounded, color: kAmber, size: icon),
+    );
+  }
+
+  // Small: logo, AKAY and one line of tagline.
+  Widget _small() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _logo(box: 36, icon: 28),
+            const SizedBox(width: 10),
+            const Text(
+              'AKAY',
+              style: TextStyle(
+                fontSize: 17,
+                letterSpacing: 2,
+                fontWeight: FontWeight.w700,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'Sa oras ng sakuna, may aakay sa iyo.',
+          style: TextStyle(
+            fontSize: 21,
+            height: 1.15,
+            fontWeight: FontWeight.w400,
+            color: Colors.white,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Big: the original full intro for the Welcome screen.
+  Widget _big() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _logo(box: 44, icon: 34),
+            const SizedBox(width: 12),
+            const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'AKAY',
+                  style: TextStyle(
+                    fontSize: 18,
+                    letterSpacing: 2,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                  ),
+                ),
+                Text(
+                  'Community response',
+                  style: TextStyle(fontSize: 12, color: Color(0xCCFFFFFF)),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 36),
+        const Text(
+          'GUIDED HELP WHEN IT MATTERS MOST',
+          style: TextStyle(
+            fontSize: 12,
+            letterSpacing: 1.2,
+            fontWeight: FontWeight.w700,
+            color: kAmber,
+          ),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'Sa oras ng sakuna, may\naakay sa iyo.',
+          style: TextStyle(
+            fontSize: 34,
+            height: 1.1,
+            fontWeight: FontWeight.w400,
+            letterSpacing: -0.5,
+            color: Colors.white,
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'Connect vulnerable households with verified community responders during floods and emergencies.',
+          style: TextStyle(
+            fontSize: 16,
+            height: 1.5,
+            color: Color(0xCCFFFFFF),
+          ),
+        ),
+      ],
     );
   }
 }

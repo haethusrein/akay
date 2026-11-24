@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../akay_backend.dart';
 import '../create_account_screens.dart'; // showComingSoon
 import '../main.dart';
+import '../map/community_map.dart';
 import 'akay_nav.dart';
 import 'emergency_info_screen.dart';
 import 'screen_widgets.dart';
@@ -19,8 +20,8 @@ import 'screen_widgets.dart';
 // Nothing on this screen is sample data. A number or card appears only when
 // the backend returned it; otherwise the screen shows "-" or hides the card.
 //
-// TODO(backend): the map is an illustration. Pins should come from
-// AkayBackend.mapMarkers().
+// The map is a real OpenStreetMap map of Valencia City (see lib/map/).
+// Its settings are in lib/map/map_config.dart.
 // ============================================================
 class CommunityScreen extends StatefulWidget {
   const CommunityScreen({super.key});
@@ -180,7 +181,7 @@ class _CommunityScreenState extends State<CommunityScreen> {
                   ],
                 ),
                 const SizedBox(height: 16),
-                const _MapPreview(),
+                const CommunityMap(),
                 const SizedBox(height: 16),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -348,40 +349,6 @@ class _InfoCard extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-// ---------- Map illustration (same look as Home) ----------
-// A drawing only: no pins and no place names, so it cannot be mistaken for live data.
-class _MapPreview extends StatelessWidget {
-  const _MapPreview();
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        height: 240,
-        width: double.infinity,
-        color: const Color(0xFFE9EFEB),
-        child: const Stack(
-          children: [
-            // river
-            Positioned(
-              left: 0,
-              top: 0,
-              bottom: 0,
-              width: 48,
-              child: ColoredBox(color: Color(0xFFC6DBE3)),
-            ),
-            Align(
-              alignment: Alignment(0.2, 0),
-              child: Text('Map preview - live pins coming soon', style: kGreyText),
-            ),
-          ],
-        ),
       ),
     );
   }
