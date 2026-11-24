@@ -32,6 +32,11 @@ service cloud.firestore {
     function reqAfter(id) { return getAfter(/databases/$(database)/documents/requests/$(id)).data; }
     function reqNow(id) { return get(/databases/$(database)/documents/requests/$(id)).data; }
     function hh() { return get(/databases/$(database)/documents/households/$(request.auth.uid)).data; }
+    function inPhilippines(point) {
+      return point is latlng
+        && point.latitude() >= 4 && point.latitude() <= 22
+        && point.longitude() >= 116 && point.longitude() <= 127;
+    }
 
     // ---------- accounts ----------
     match /users/{uid} {
@@ -42,7 +47,8 @@ service cloud.firestore {
         && request.resource.data.mobile is string
         && request.resource.data.mobile.matches('^\\+639[0-9]{9}$')
         && request.resource.data.role in ['resident', 'respondent']
-        && request.resource.data.verified == false;
+        && request.resource.data.verified == false
+        && request.resource.data.createdAt == request.time;
       // the ONLY allowed update: becoming verified with an unused code of your own role
       allow update: if isSelf(uid) && (
         // Verification with a matching, unused one-time code.
@@ -96,9 +102,34 @@ service cloud.firestore {
     match /households/{uid} {
       allow read: if isSelf(uid);
       allow create, update: if isSelf(uid)
-        && request.resource.data.name is string && request.resource.data.name.size() <= 80
+        && request.resource.data.keys().hasOnly([
+          'name', 'barangay', 'address', 'location', 'members',
+          'mobilityNeed', 'notes', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'name', 'barangay', 'address', 'location', 'members',
+          'mobilityNeed', 'notes', 'updatedAt'
+        ])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 1
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.barangay in [
+          'Barangay Bagontaas', 'Barangay Batangan', 'Barangay Colonia',
+          'Barangay Lumbo', 'Barangay Mailag', 'Barangay Poblacion'
+        ]
+        && request.resource.data.address is string
+        && request.resource.data.address.size() >= 1
+        && request.resource.data.address.size() <= 200
+        && inPhilippines(request.resource.data.location)
         && request.resource.data.members is int
-        && request.resource.data.members >= 1 && request.resource.data.members <= 50;
+        && request.resource.data.members >= 1 && request.resource.data.members <= 50
+        && request.resource.data.mobilityNeed in [
+          'None', 'Wheelchair required', 'Bedridden', 'Oxygen tank',
+          'Needs carrying / stretcher', 'Infant or young child', 'Other'
+        ]
+        && request.resource.data.notes is list
+        && request.resource.data.notes.size() <= 20
+        && request.resource.data.updatedAt == request.time;
       allow delete: if false;
     }
 
@@ -140,7 +171,7 @@ service cloud.firestore {
         && request.resource.data.responderId == null
         && request.resource.data.responderMobile == null
         && request.resource.data.type in ['flood', 'medical', 'fire', 'other']
-        && request.resource.data.location is latlng
+        && inPhilippines(request.resource.data.location)
         && request.resource.data.barangay == hh().barangay
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time
@@ -214,7 +245,7 @@ service cloud.firestore {
         && request.resource.data.userId == request.auth.uid
         && reqAfter(id).userId == request.auth.uid
         && reqAfter(id).status == 'pending'
-        && request.resource.data.location is latlng
+        && inPhilippines(request.resource.data.location)
         && request.resource.data.address is string
         && request.resource.data.address.size() <= 300
         && request.resource.data.address == hh().address
