@@ -156,7 +156,7 @@ class _EvacuationStatusScreenState extends State<EvacuationStatusScreen> {
           ),
           const SizedBox(height: 12),
           OutlineAction(
-            label: 'Scan admin evacuation QR',
+            label: 'Scan evacuation QR',
             icon: Icons.qr_code_scanner,
             onPressed: _busy ? null : _scanEvacuationQr,
           ),

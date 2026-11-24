@@ -30,6 +30,7 @@ import 'package:flutter/services.dart';
 
 import '../akay_backend.dart';
 import '../main.dart'; // colors and text styles
+import 'admin_evacuation_qr_screen.dart';
 import 'screen_widgets.dart'; // StatusBanner, confirmDialog, requestTypeLabel, requestTypeIcon
 
 // ============================================================
@@ -443,7 +444,7 @@ class _AdminConsoleState extends State<_AdminConsole> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 7,
+      length: 8,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -493,6 +494,7 @@ class _AdminConsoleState extends State<_AdminConsole> {
               Tab(text: 'Accounts'),
               Tab(text: '911 calls'),
               Tab(text: 'Evacuation'),
+              Tab(text: 'Evacuation QR'),
               Tab(text: 'Assignments'),
               Tab(text: 'Flood alert'),
               Tab(text: 'Error log'),
@@ -506,6 +508,7 @@ class _AdminConsoleState extends State<_AdminConsole> {
                 _accountsTab(),
                 const _CallsTab(),
                 _EvacuationStatusTab(users: _users),
+                const AdminEvacuationQrScreen(),
                 _ResponderAssignmentsTab(users: _users),
                 const _FloodEmergencyTab(),
                 const _LogTab(),
