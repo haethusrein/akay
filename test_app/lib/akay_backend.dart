@@ -8,6 +8,7 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
+
 import 'create_account_screens.dart' show UserRole;
 
 class AkayBackend {
@@ -64,7 +65,7 @@ class AkayBackend {
   };
 
   /// Turns any error into a message you can show in a SnackBar.
-    static String friendlyError(Object e) {
+  static String friendlyError(Object e) {
     // Every error that is shown to a user is also saved for the admin (Error log tab).
     // Plain text messages are expected ("You already have an active request."), so they are skipped.
     if (e is! String &&
@@ -164,17 +165,18 @@ class AkayBackend {
     }
   }
 
-static Future<void> deactivateAccount() async {
-  final user = _auth.currentUser;
-  if (user == null) throw 'You are not signed in.';
+  static Future<void> deactivateAccount() async {
+    final user = _auth.currentUser;
+    if (user == null) throw 'You are not signed in.';
 
-  await _db.doc('users/${user.uid}').update({
-    'accountStatus': 'deleted',
-    'deletedAt': FieldValue.serverTimestamp(),
-  });
+    await _db.doc('users/${user.uid}').update({
+      'accountStatus': 'deleted',
+      'deletedAt': FieldValue.serverTimestamp(),
+    });
 
-  await _auth.signOut();
-}
+    await _auth.signOut();
+  }
+
   static Future<void> signOut() => _auth.signOut();
 
   /// Household Setup screen -> Save
@@ -202,7 +204,7 @@ static Future<void> deactivateAccount() async {
     }, SetOptions(merge: true));
   }
 
-   /// Verify Code screen -> Verify.
+  /// Verify Code screen -> Verify.
   /// Codes are created by hand in the console: verificationCodes/<6-digit code> { role, used: false, expiresAt }
   static Future<void> verifyCode(String raw) async {
     final code = raw.replaceAll(RegExp(r'\D'), '');
@@ -229,6 +231,13 @@ static Future<void> deactivateAccount() async {
   /// Role / verified badge ("Verified" on the Home household card)
   static Stream<DocumentSnapshot<Map<String, dynamic>>> myProfile() =>
       _db.doc('users/$uid').snapshots();
+
+  static Future<bool> isRespondent() async {
+    final me = uid;
+    if (me == null) return false;
+    final snap = await _db.doc('users/$me').get();
+    return snap.data()?['role'] == 'respondent';
+  }
 
   // ---------- location ----------
 
@@ -323,7 +332,7 @@ static Future<void> deactivateAccount() async {
   }
 
   /// Requester cancels.
-    /// Requester cancels.
+  /// Requester cancels.
   static Future<void> cancelRequest(String id) async {
     final ref = _db.doc('requests/$id');
     final r = (await ref.get()).data();
@@ -352,7 +361,7 @@ static Future<void> deactivateAccount() async {
   }
 
   /// Verified responder accepts. If two try at once, the second fails (rules only allow pending -> matched).
-    /// Verified responder accepts. If two try at once, the second fails (rules only allow pending -> matched).
+  /// Verified responder accepts. If two try at once, the second fails (rules only allow pending -> matched).
   /// A responder can hold one active job at a time.
   static Future<void> acceptRequest(String id) async {
     final ref = _db.doc('requests/$id');
@@ -392,7 +401,7 @@ static Future<void> deactivateAccount() async {
   }
 
   /// Requester or the assigned responder marks it resolved.
-    /// Requester or the assigned responder marks it resolved.
+  /// Requester or the assigned responder marks it resolved.
   static Future<void> resolveRequest(String id) async {
     final ref = _db.doc('requests/$id');
     final r = (await ref.get()).data();
@@ -420,7 +429,8 @@ static Future<void> deactivateAccount() async {
     }
     await batch.commit();
   }
-    /// Assigned responder hands the request back so another responder can take it.
+
+  /// Assigned responder hands the request back so another responder can take it.
   static Future<void> releaseRequest(String id) async {
     final ref = _db.doc('requests/$id');
     final r = (await ref.get()).data();
@@ -558,10 +568,9 @@ static Future<void> deactivateAccount() async {
   }
 
   /// Responder: "Decline - show next responder". Hides this request from MY list only.
-  static Future<void> declineRequest(String requestId) =>
-      _db.doc('responderDeclines/$uid/items/$requestId').set({
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+  static Future<void> declineRequest(String requestId) => _db
+      .doc('responderDeclines/$uid/items/$requestId')
+      .set({'createdAt': FieldValue.serverTimestamp()});
 
   /// Responder: "Report suspicious ping". Admins read the `reports` collection in the console.
   static Future<void> reportRequest(String requestId, {String? reason}) =>
@@ -592,11 +601,9 @@ static Future<void> deactivateAccount() async {
   // ---------- resident: evacuation status (wireframe 08) ----------
 
   /// 'home' | 'transit' | 'evacuated'
-  static Future<void> setEvacuationStatus(String status) =>
-      _db.doc('evacuationStatus/$uid').set({
-        'status': status,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+  static Future<void> setEvacuationStatus(String status) => _db
+      .doc('evacuationStatus/$uid')
+      .set({'status': status, 'updatedAt': FieldValue.serverTimestamp()});
 
   static Stream<DocumentSnapshot<Map<String, dynamic>>> myEvacuationStatus() =>
       _db.doc('evacuationStatus/$uid').snapshots();
@@ -714,18 +721,20 @@ static Future<void> deactivateAccount() async {
   static Stream<QuerySnapshot<Map<String, dynamic>>> notifications() {
     final me = uid;
     if (me == null) return const Stream.empty();
-    return _notifsOf(
-      me,
-    ).orderBy('createdAt', descending: true).limit(50).snapshots();
+    return _notifsOf(me)
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .snapshots();
   }
 
   /// Bell badge number
   static Stream<int> unreadCount() {
     final me = uid;
     if (me == null) return Stream.value(0);
-    return _notifsOf(
-      me,
-    ).where('isRead', isEqualTo: false).snapshots().map((s) => s.size);
+    return _notifsOf(me)
+        .where('isRead', isEqualTo: false)
+        .snapshots()
+        .map((s) => s.size);
   }
 
   static Future<void> markRead(String id) async {
@@ -743,9 +752,10 @@ static Future<void> deactivateAccount() async {
   static Future<void> markAllRead() async {
     final me = uid;
     if (me == null) return;
-    final snap = await _notifsOf(
-      me,
-    ).where('isRead', isEqualTo: false).limit(400).get();
+    final snap = await _notifsOf(me)
+        .where('isRead', isEqualTo: false)
+        .limit(400)
+        .get();
     final batch = _db.batch();
     for (final d in snap.docs) {
       batch.update(d.reference, {'isRead': true});
@@ -798,7 +808,9 @@ static Future<void> deactivateAccount() async {
     }
     final custom = (customPin ?? '').replaceAll(RegExp(r'\D'), '');
     final wantsCustom = custom.isNotEmpty;
-    if (wantsCustom && custom.length != 6) throw 'A pin must be exactly 6 digits.';
+    if (wantsCustom && custom.length != 6) {
+      throw 'A pin must be exactly 6 digits.';
+    }
 
     final life = demo ? demoPinLifetime : pinLifetime;
     for (var attempt = 0; attempt < 8; attempt++) {
@@ -808,7 +820,9 @@ static Future<void> deactivateAccount() async {
       final ref = _db.doc('verificationCodes/$pin');
       try {
         if ((await ref.get()).exists) {
-          if (wantsCustom) throw 'That pin already exists. Choose another one.';
+          if (wantsCustom) {
+            throw 'That pin already exists. Choose another one.';
+          }
           continue; // random pin collided with an existing one: try another
         }
         await ref.set({

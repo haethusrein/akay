@@ -1,10 +1,15 @@
+import 'screens/responder_list_screen.dart';
+
 // ============================================================
 // AKAY - Create account flow
 // ============================================================
 import 'dart:math' show min;
+
 import 'akay_backend.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import 'screens/sign_in_screen.dart';
 import 'main.dart';
 
@@ -485,12 +490,13 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
     try {
       // This call checks the code against Firestore.
       await AkayBackend.verifyCode(_controller.text);
-
+      final isResponder = await AkayBackend.isRespondent();
       if (!mounted) return;
-
-      // Reaching this point means the server accepted the code.
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        MaterialPageRoute(
+          builder: (_) =>
+              isResponder ? const ResponderListScreen() : const HomeScreen(),
+        ),
         (route) => false,
       );
     } catch (e) {
@@ -516,11 +522,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
               color: kLightGreen,
               borderRadius: BorderRadius.circular(16),
             ),
-            child: const Icon(
-              Icons.shield_outlined,
-              color: kGreen,
-              size: 28,
-            ),
+            child: const Icon(Icons.shield_outlined, color: kGreen, size: 28),
           ),
           const SizedBox(height: 16),
           const Text('IDENTITY VERIFICATION', style: kSmallLabel),

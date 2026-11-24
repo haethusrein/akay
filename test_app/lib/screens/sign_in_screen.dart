@@ -1,3 +1,4 @@
+import 'responder_list_screen.dart';
 import 'package:flutter/material.dart';
 
 import '../akay_backend.dart';
@@ -65,10 +66,10 @@ class _SignInScreenState extends State<SignInScreen> {
         mobile: _mobileController.text,
         password: _passwordController.text,
       );
+      final isResponder = await AkayBackend.isRespondent();
       if (!mounted) return;
-      // TODO: if the account is a respondent, open the responder screens instead.
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
+        MaterialPageRoute(builder: (_) => isResponder ? const ResponderListScreen() : const HomeScreen()),
         (route) => false,
       );
     } catch (e) {

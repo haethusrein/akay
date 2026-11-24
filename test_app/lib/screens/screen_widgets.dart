@@ -63,7 +63,14 @@ IconData requestTypeIcon(String type) {
 // ---------- Page frame: back arrow + "AKAY" title, scrolling body ----------
 class AkayScreen extends StatelessWidget {
   final Widget child;
-  const AkayScreen({super.key, required this.child});
+  final bool showBack;
+  final Widget? trailing;
+  const AkayScreen({
+    super.key,
+    required this.child,
+    this.showBack = true,
+    this.trailing,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -76,11 +83,14 @@ class AkayScreen extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               child: Row(
                 children: [
-                  IconButton(
-                    tooltip: 'Back',
-                    icon: const Icon(Icons.arrow_back, color: kTextDark),
-                    onPressed: () => Navigator.of(context).maybePop(),
-                  ),
+                  if (showBack)
+                    IconButton(
+                      tooltip: 'Back',
+                      icon: const Icon(Icons.arrow_back, color: kTextDark),
+                      onPressed: () => Navigator.of(context).maybePop(),
+                    )
+                  else
+                    const SizedBox(width: 48),
                   const Expanded(
                     child: Center(
                       child: Text(
@@ -94,7 +104,7 @@ class AkayScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 48), // keeps the title centered
+                  trailing ?? const SizedBox(width: 48),
                 ],
               ),
             ),
