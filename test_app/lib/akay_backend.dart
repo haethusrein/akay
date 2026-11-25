@@ -221,6 +221,92 @@ class AkayBackend {
     }, SetOptions(merge: true));
   }
 
+  /// Updates the editable household details without changing its barangay,
+  /// pinned home location, or private account mobile number.
+  static Future<void> updateHouseholdProfile({
+    required String name,
+    required String address,
+    required int members,
+    required String mobilityNeed,
+  }) async {
+    final me = uid;
+    if (me == null) throw 'Sign in before editing your household.';
+
+    final cleanName = name.trim();
+    final cleanAddress = address.trim();
+    const allowedNeeds = {
+      'None',
+      'Wheelchair required',
+      'Bedridden',
+      'Oxygen tank',
+      'Needs carrying / stretcher',
+      'Infant or young child',
+      'Other',
+    };
+    if (cleanName.isEmpty || cleanName.length > 80) {
+      throw 'Household name must be between 1 and 80 characters.';
+    }
+    if (cleanAddress.isEmpty || cleanAddress.length > 200) {
+      throw 'Address must be between 1 and 200 characters.';
+    }
+    if (members < 1 || members > 50) {
+      throw 'Household size must be between 1 and 50.';
+    }
+    if (!allowedNeeds.contains(mobilityNeed)) {
+      throw 'Choose a valid mobility or equipment need.';
+    }
+
+    await _db.doc('households/$me').update({
+      'name': cleanName,
+      'address': cleanAddress,
+      'members': members,
+      'mobilityNeed': mobilityNeed,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Finds the nearest configured evacuation center to the resident's
+  /// registered household location. This uses the existing signed-in read
+  /// permission for `evacuationCenters`; it adds no Firestore rules.
+  static Future<Map<String, dynamic>?> nearestEvacuationCenter() async {
+    final me = uid;
+    if (me == null) return null;
+
+    final household = await _db.doc('households/$me').get();
+    final origin = household.data()?['location'];
+    final centers = await _db.collection('evacuationCenters').get();
+
+    Map<String, dynamic>? nearest;
+    double? nearestMeters;
+    for (final center in centers.docs) {
+      final data = center.data();
+      final point = data['location'];
+      if (point is! GeoPoint) continue;
+
+      final distanceMeters = origin is GeoPoint
+          ? Geolocator.distanceBetween(
+              origin.latitude,
+              origin.longitude,
+              point.latitude,
+              point.longitude,
+            )
+          : 0.0;
+      if (nearest == null || distanceMeters < nearestMeters!) {
+        nearestMeters = distanceMeters;
+        nearest = {
+          'id': center.id,
+          'name': (data['name'] ?? 'Evacuation center').toString(),
+          'latitude': point.latitude,
+          'longitude': point.longitude,
+          if (origin is GeoPoint)
+            'distanceKm': (distanceMeters / 1000 * 10).round() / 10,
+        };
+        if (origin is! GeoPoint) break;
+      }
+    }
+    return nearest;
+  }
+
   /// Verify Code screen -> Verify.
   /// Codes are created by hand in the console: verificationCodes/<6-digit code> { role, used: false, expiresAt }
   static Future<void> verifyCode(String raw) async {
