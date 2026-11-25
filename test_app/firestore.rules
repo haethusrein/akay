@@ -429,6 +429,35 @@ service cloud.firestore {
             || uid == reqAfter(request.resource.data.requestId).responderId);
     }
 
+    // ---------- Bluetooth SOS relay ----------
+    // A phone that heard someone's offline SOS over Bluetooth uploads it here once it has internet.
+    // Doc id is "<8-hex tag>_<relaying uid>", so one phone writes each SOS at most once (re-sends just overwrite it).
+    // Only coarse data (type, need, headcount, ~11 m location). No name, address or uid of the person in need.
+    match /relayedSos/{id} {
+      allow read: if isSelf(resource.data.relayedBy) || isVerifiedResponder() || isAdmin();
+      allow create, update: if signedIn()
+        && request.resource.data.keys().hasOnly(['tag', 'relayedBy', 'type', 'mobilityNeed', 'members', 'lat', 'lng', 'heardAt', 'createdAt'])
+        && request.resource.data.keys().hasAll(['tag', 'relayedBy', 'type', 'mobilityNeed', 'members', 'lat', 'lng', 'heardAt', 'createdAt'])
+        && request.resource.data.relayedBy == request.auth.uid
+        && request.resource.data.tag is string
+        && request.resource.data.tag.matches('^[0-9A-F]{8}$')
+        && id == request.resource.data.tag + '_' + request.auth.uid
+        && request.resource.data.type in ['flood', 'medical', 'fire', 'other']
+        && request.resource.data.mobilityNeed in [
+          'None', 'Wheelchair required', 'Bedridden', 'Oxygen tank',
+          'Needs carrying / stretcher', 'Infant or young child', 'Other'
+        ]
+        && request.resource.data.members is int
+        && request.resource.data.members >= 1 && request.resource.data.members <= 255
+        && request.resource.data.lat is number
+        && request.resource.data.lng is number
+        && request.resource.data.lat >= 4 && request.resource.data.lat <= 22
+        && request.resource.data.lng >= 116 && request.resource.data.lng <= 127
+        && request.resource.data.heardAt is timestamp
+        && request.resource.data.createdAt == request.time;
+      allow delete: if false;
+    }
+
     // ---------- error log (read on the Admin screen) ----------
     // Any signed-in user can save an error; only the admin can read or delete them.
     match /errorLogs/{id} {

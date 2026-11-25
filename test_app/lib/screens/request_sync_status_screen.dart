@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../ble/ble_sos_service.dart';
 import '../create_account_screens.dart'; // showComingSoon
 import '../main.dart';
+import 'nearby_sos_screens.dart';
 import 'screen_widgets.dart';
 
 // ============================================================
@@ -35,7 +37,28 @@ class RequestSyncStatusScreen extends StatefulWidget {
 class _RequestSyncStatusScreenState extends State<RequestSyncStatusScreen> {
   late final TimeOfDay _savedAt = TimeOfDay.now();
   TimeOfDay? _lastRetry;
-  late final SyncState _state = widget.state;
+  late SyncState _state = widget.state;
+
+  @override
+  void initState() {
+    super.initState();
+    // Move to "Shared Nearby" as soon as a neighbour confirms it holds our SOS.
+    BleSosService.instance.addListener(_onBle);
+    _onBle();
+  }
+
+  @override
+  void dispose() {
+    BleSosService.instance.removeListener(_onBle);
+    super.dispose();
+  }
+
+  void _onBle() {
+    final shared = BleSosService.instance.ackCount > 0;
+    if (shared && _state == SyncState.waitingToSync && mounted) {
+      setState(() => _state = SyncState.sharedNearby);
+    }
+  }
 
   void _retry() {
     // TODO(backend): try to send the saved request again.
@@ -137,11 +160,11 @@ class _RequestSyncStatusScreenState extends State<RequestSyncStatusScreen> {
           OutlineAction(
             label: 'Send to nearby phones (Bluetooth)',
             icon: Icons.bluetooth,
-            // TODO: open the Nearby SOS screens (Bluetooth wireframes 05-08) when built.
-            // TODO(backend): Bluetooth relay. For a quick demo you can set
-            // _state = SyncState.sharedNearby here instead.
-            onPressed: () =>
-                showComingSoon(context, 'Nearby SOS (Bluetooth) is coming soon.'),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => NearbySosScreen(type: widget.type),
+              ),
+            ),
           ),
           const SizedBox(height: 12),
           OutlineAction(
