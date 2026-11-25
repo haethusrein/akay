@@ -6,6 +6,10 @@ import 'create_account_screens.dart';
 import 'akay_backend.dart';
 import 'firebase_options.dart';
 import 'screens/akay_nav.dart';
+import 'screens/edit_household_profile_screen.dart';
+import 'screens/emergency_info_screen.dart';
+import 'screens/evacuation_status_screen.dart';
+import 'screens/nearby_sos_screens.dart';
 import 'screens/request_help_sheet.dart';
 import 'screens/responder_list_screen.dart';
 import 'l10n/app_strings.dart';
@@ -117,6 +121,8 @@ class HomeScreen extends StatelessWidget {
           const SizedBox(height: 28),
           buildHouseholdSection(),
           const SizedBox(height: 28),
+          buildSafetyToolsSection(),
+          const SizedBox(height: 28),
           buildUpdatesSection(),
           const SizedBox(height: 20),
           buildCommunityStatus(),
@@ -188,6 +194,42 @@ Widget buildEmergencyCard(BuildContext context) {
   );
 }
 
+// ---------- Safety tools section ----------
+
+Widget buildSafetyToolsSection() {
+  return const Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text('SAFETY TOOLS', style: kSmallLabel),
+      SizedBox(height: 10),
+      ToolTile(
+        icon: Icons.alt_route,
+        title: 'Update evacuation status',
+        subtitle: 'Still here, in transit, or evacuated',
+        page: EvacuationStatusScreen(),
+      ),
+      ToolTile(
+        icon: Icons.info_outline,
+        title: 'Emergency information',
+        subtitle: 'Works offline',
+        page: EmergencyInfoScreen(),
+      ),
+      ToolTile(
+        icon: Icons.bluetooth,
+        title: 'Nearby SOS (Bluetooth)',
+        subtitle: 'Share your request with nearby phones',
+        page: NearbySosScreen(),
+      ),
+      ToolTile(
+        icon: Icons.sync_alt,
+        title: 'Relay phone preview',
+        subtitle: 'What a neighbour sees when holding an SOS',
+        page: RelayPhoneScreen(),
+      ),
+    ],
+  );
+}
+
 // ---------- Household section ----------
 
 Widget buildHouseholdSection() {
@@ -221,10 +263,18 @@ Widget buildHouseholdSection() {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const SectionHeader(
+              SectionHeader(
                 label: 'HOUSEHOLD READINESS',
                 title: 'Your household',
                 actionText: 'Manage details',
+                onActionTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          EditHouseholdProfileScreen(currentData: household),
+                    ),
+                  );
+                },
               ),
               const SizedBox(height: 12),
               AppCard(
@@ -761,12 +811,14 @@ class SectionHeader extends StatelessWidget {
   final String label;
   final String title;
   final String actionText;
+  final VoidCallback? onActionTap;
 
   const SectionHeader({
     super.key,
     required this.label,
     required this.title,
     required this.actionText,
+    this.onActionTap,
   });
 
   @override
@@ -787,12 +839,19 @@ class SectionHeader extends StatelessWidget {
             ],
           ),
         ),
-        Text(
-          '$actionText  >',
-          style: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-            color: kGreen,
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onActionTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Text(
+              '$actionText  >',
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: kGreen,
+              ),
+            ),
           ),
         ),
       ],
@@ -907,6 +966,74 @@ class UpdateRow extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// One tappable row that opens another screen.
+class ToolTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget page;
+
+  const ToolTile({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.page,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => page),
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: kBorder),
+            ),
+            child: Row(
+              children: [
+                IconBox(icon: icon, bg: kLightGreen, size: 40),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: kTextDark,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(subtitle, style: kGreyText),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.chevron_right,
+                  size: 20,
+                  color: kTextDark,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

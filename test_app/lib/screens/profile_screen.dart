@@ -5,9 +5,6 @@ import '../main.dart';
 import 'admin_only.dart';
 import 'akay_nav.dart';
 import 'checkin_screen.dart';
-import 'emergency_info_screen.dart';
-import 'evacuation_status_screen.dart';
-import 'nearby_sos_screens.dart';
 import 'responder_list_screen.dart';
 import 'screen_widgets.dart';
 import 'edit_household_profile_screen.dart';
@@ -229,32 +226,6 @@ return AppCard(
               );
             },
           ),
-          const Text('SAFETY TOOLS', style: kSmallLabel),
-          const SizedBox(height: 10),
-          const _ToolTile(
-            icon: Icons.alt_route,
-            title: 'Update evacuation status',
-            subtitle: 'Still here, in transit, or evacuated',
-            page: EvacuationStatusScreen(),
-          ),
-          const _ToolTile(
-            icon: Icons.info_outline,
-            title: 'Emergency information',
-            subtitle: 'Works offline',
-            page: EmergencyInfoScreen(),
-          ),
-          const _ToolTile(
-            icon: Icons.bluetooth,
-            title: 'Nearby SOS (Bluetooth)',
-            subtitle: 'Share your request with nearby phones',
-            page: NearbySosScreen(),
-          ),
-          const _ToolTile(
-            icon: Icons.sync_alt,
-            title: 'Relay phone preview',
-            subtitle: 'What a neighbour sees when holding an SOS',
-            page: RelayPhoneScreen(),
-          ),
           // Responder tools require both the responder role and verification.
           StreamBuilder(
             stream: AkayBackend.myProfile(),
@@ -268,13 +239,13 @@ return AppCard(
 
               return const Column(
                 children: [
-                  _ToolTile(
+                  ToolTile(
                     icon: Icons.groups_outlined,
                     title: 'Responder dashboard',
                     subtitle: 'Households needing help',
                     page: ResponderListScreen(),
                   ),
-                  _ToolTile(
+                  ToolTile(
                     icon: Icons.fact_check_outlined,
                     title: 'Evacuation-center check-in',
                     subtitle: 'Confirm a household arrived',
@@ -291,7 +262,7 @@ return AppCard(
               if (!AkayBackend.isAdminProfile(snapshot.data?.data())) {
                 return const SizedBox.shrink();
               }
-              return const _ToolTile(
+              return const ToolTile(
                 icon: Icons.admin_panel_settings_outlined,
                 title: 'Admin',
                 subtitle: 'Pins, accounts, 911 calls, error log',
@@ -312,73 +283,6 @@ return AppCard(
             onPressed: () => _deactivateAccount(context),
           ),
         ],
-      ),
-    );
-  }
-}
-
-// One tappable row that opens another screen.
-class _ToolTile extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final Widget page;
-
-  const _ToolTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.page,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Material(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => page),
-          ),
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: kBorder),
-            ),
-            child: Row(
-              children: [
-                IconBox(icon: icon, bg: kLightGreen, size: 40),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: kTextDark,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(subtitle, style: kGreyText),
-                    ],
-                  ),
-                ),
-                const Icon(
-                  Icons.chevron_right,
-                  size: 20,
-                  color: kTextDark,
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
