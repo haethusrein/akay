@@ -232,7 +232,7 @@ class ScreenTitle extends StatelessWidget {
                   onPressed: () => Navigator.of(context).maybePop(),
                 ),
               const Spacer(),
-              if (trailing != null) trailing!,
+              ?trailing,
             ],
           ),
           const SizedBox(height: 8),

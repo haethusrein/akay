@@ -52,7 +52,7 @@ class AkayApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AppLanguage>(
       valueListenable: AppStrings.current,
-      builder: (context, _, __) {
+      builder: (context, _, _) {
         return MaterialApp(
           debugShowCheckedModeBanner: false,
           title: 'AKAY',

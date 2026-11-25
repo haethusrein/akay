@@ -129,7 +129,7 @@ class _EditHouseholdProfileScreenState
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
-              value: _mobilityNeed,
+              initialValue: _mobilityNeed,
               decoration: const InputDecoration(
                 labelText: 'Mobility or Equipment Needs',
               ),
