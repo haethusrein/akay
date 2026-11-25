@@ -82,7 +82,7 @@ class _EmergencyInfoScreenState extends State<EmergencyInfoScreen> {
             'name': centerName,
             'latitude': centerLatitude,
             'longitude': centerLongitude,
-            if (centerDistance != null) 'distanceKm': centerDistance,
+            if (centerDistance != null) 'distanceKm': ?centerDistance,
           };
         }
       });
