@@ -140,6 +140,35 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Personal emergency details are private to the account owner. They are
+    // not exposed to responders unless a separate, explicit sharing flow is added.
+    match /emergencyProfiles/{uid} {
+      allow read: if isSelf(uid);
+      allow create, update: if isSelf(uid)
+        && request.resource.data.keys().hasOnly([
+          'conditions', 'medications', 'allergies', 'contactName',
+          'contactPhone', 'instructions', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'conditions', 'medications', 'allergies', 'contactName',
+          'contactPhone', 'instructions', 'updatedAt'
+        ])
+        && request.resource.data.conditions is string
+        && request.resource.data.conditions.size() <= 500
+        && request.resource.data.medications is string
+        && request.resource.data.medications.size() <= 500
+        && request.resource.data.allergies is string
+        && request.resource.data.allergies.size() <= 500
+        && request.resource.data.contactName is string
+        && request.resource.data.contactName.size() <= 80
+        && request.resource.data.contactPhone is string
+        && request.resource.data.contactPhone.size() <= 24
+        && request.resource.data.instructions is string
+        && request.resource.data.instructions.size() <= 500
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
     // Responders switch "online" and share a coarse (~1 km) position (counted in Community status).
     // Readable by verified users only; writes are limited to known keys, server time and Philippine coordinates.
     match /presence/{uid} {
@@ -429,35 +458,6 @@ service cloud.firestore {
             || uid == reqAfter(request.resource.data.requestId).responderId);
     }
 
-    // ---------- Bluetooth SOS relay ----------
-    // A phone that heard someone's offline SOS over Bluetooth uploads it here once it has internet.
-    // Doc id is "<8-hex tag>_<relaying uid>", so one phone writes each SOS at most once (re-sends just overwrite it).
-    // Only coarse data (type, need, headcount, ~11 m location). No name, address or uid of the person in need.
-    match /relayedSos/{id} {
-      allow read: if isSelf(resource.data.relayedBy) || isVerifiedResponder() || isAdmin();
-      allow create, update: if signedIn()
-        && request.resource.data.keys().hasOnly(['tag', 'relayedBy', 'type', 'mobilityNeed', 'members', 'lat', 'lng', 'heardAt', 'createdAt'])
-        && request.resource.data.keys().hasAll(['tag', 'relayedBy', 'type', 'mobilityNeed', 'members', 'lat', 'lng', 'heardAt', 'createdAt'])
-        && request.resource.data.relayedBy == request.auth.uid
-        && request.resource.data.tag is string
-        && request.resource.data.tag.matches('^[0-9A-F]{8}$')
-        && id == request.resource.data.tag + '_' + request.auth.uid
-        && request.resource.data.type in ['flood', 'medical', 'fire', 'other']
-        && request.resource.data.mobilityNeed in [
-          'None', 'Wheelchair required', 'Bedridden', 'Oxygen tank',
-          'Needs carrying / stretcher', 'Infant or young child', 'Other'
-        ]
-        && request.resource.data.members is int
-        && request.resource.data.members >= 1 && request.resource.data.members <= 255
-        && request.resource.data.lat is number
-        && request.resource.data.lng is number
-        && request.resource.data.lat >= 4 && request.resource.data.lat <= 22
-        && request.resource.data.lng >= 116 && request.resource.data.lng <= 127
-        && request.resource.data.heardAt is timestamp
-        && request.resource.data.createdAt == request.time;
-      allow delete: if false;
-    }
-
     // ---------- error log (read on the Admin screen) ----------
     // Any signed-in user can save an error; only the admin can read or delete them.
     match /errorLogs/{id} {
@@ -477,7 +477,22 @@ service cloud.firestore {
     }
 
     // ---------- content and app-wide emergency advisory ----------
-    match /updates/{id}           { allow read: if signedIn(); allow write: if false; }
+    match /updates/{id} {
+      allow read: if signedIn();
+      // Only the app's admin can publish a tightly shaped community post.
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(['title', 'body', 'createdAt'])
+        && request.resource.data.keys().hasAll(['title', 'body', 'createdAt'])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 80
+        && request.resource.data.body is string
+        && request.resource.data.body.size() >= 1
+        && request.resource.data.body.size() <= 500
+        && request.resource.data.createdAt == request.time;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
     match /evacuationCenters/{id} { allow read: if signedIn(); allow write: if false; }
     match /config/floodEmergency {
       allow read: if signedIn();

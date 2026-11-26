@@ -270,8 +270,7 @@ Widget buildHouseholdSection() {
                 onActionTap: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) =>
-                          EditHouseholdProfileScreen(currentData: household),
+                      builder: (_) => const EditHouseholdProfileScreen(),
                     ),
                   );
                 },

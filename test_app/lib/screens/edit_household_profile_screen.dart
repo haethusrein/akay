@@ -1,234 +1,233 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../akay_backend.dart';
+import '../create_account_screens.dart' show showComingSoon;
+import '../main.dart';
+import 'screen_widgets.dart';
 
+const _barangays = <String>[
+  'Barangay Bagontaas',
+  'Barangay Batangan',
+  'Barangay Colonia',
+  'Barangay Lumbo',
+  'Barangay Mailag',
+  'Barangay Poblacion',
+];
+
+const _mobilityNeeds = <String>[
+  'None',
+  'Wheelchair required',
+  'Bedridden',
+  'Oxygen tank',
+  'Needs carrying / stretcher',
+  'Infant or young child',
+  'Other',
+];
+
+/// Lets the signed-in resident edit the existing household record. The exact
+/// saved map location is preserved because this form does not move the pin.
 class EditHouseholdProfileScreen extends StatefulWidget {
-  /// The caller passes the signed-in user profile. Its mobile number is shown
-  /// read-only; account mobile changes are intentionally outside this screen.
-  final Map<String, dynamic> currentData;
-
-  const EditHouseholdProfileScreen({
-    super.key,
-    required this.currentData,
-  });
+  const EditHouseholdProfileScreen({super.key});
 
   @override
   State<EditHouseholdProfileScreen> createState() =>
       _EditHouseholdProfileScreenState();
 }
 
-class _EditHouseholdProfileScreenState
-    extends State<EditHouseholdProfileScreen> {
+class _EditHouseholdProfileScreenState extends State<EditHouseholdProfileScreen> {
   final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _nameController;
-  late final TextEditingController _phoneController;
-  late final TextEditingController _addressController;
-  late final TextEditingController _membersController;
-
-  static const _mobilityOptions = [
-    'None',
-    'Wheelchair required',
-    'Bedridden',
-    'Oxygen tank',
-    'Needs carrying / stretcher',
-    'Infant or young child',
-    'Other',
-  ];
-
-  String _mobilityNeed = 'None';
+  final _name = TextEditingController();
+  final _address = TextEditingController();
+  final _members = TextEditingController();
+  final _notes = TextEditingController();
+  String? _barangay;
+  String? _mobility;
+  GeoPoint? _location;
   bool _loading = true;
   bool _saving = false;
-  bool _hasHousehold = false;
+  bool _didLoad = false;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController();
-    _phoneController = TextEditingController(
-      text: (widget.currentData['mobile'] ?? widget.currentData['phone'] ?? '')
-          .toString(),
-    );
-    _addressController = TextEditingController();
-    _membersController = TextEditingController(text: '1');
-    _loadHousehold();
+    _load();
   }
 
-  Future<void> _loadHousehold() async {
+  Future<void> _load() async {
     try {
       final snapshot = await AkayBackend.myHousehold().first;
-      final household = snapshot.data();
-      if (!mounted) return;
-
-      if (household != null) {
-        _nameController.text = (household['name'] ?? '').toString();
-        _addressController.text = (household['address'] ?? '').toString();
-        _membersController.text = (household['members'] ?? 1).toString();
-        final savedNeed = household['mobilityNeed']?.toString();
-        _mobilityNeed = _mobilityOptions.contains(savedNeed)
-            ? savedNeed!
-            : 'None';
-        _hasHousehold = true;
-      }
+      final data = snapshot.data();
+      if (data == null) throw 'No household profile was found.';
+      final point = data['location'];
+      if (point is! GeoPoint) throw 'The household location is missing.';
+      _name.text = (data['name'] ?? '').toString();
+      _address.text = (data['address'] ?? '').toString();
+      _members.text = (data['members'] ?? 1).toString();
+      final notes = data['notes'];
+      _notes.text = notes is List ? notes.join('\n') : '';
+      _barangay = _barangays.contains(data['barangay'])
+          ? data['barangay'] as String
+          : null;
+      _mobility = _mobilityNeeds.contains(data['mobilityNeed'])
+          ? data['mobilityNeed'] as String
+          : 'None';
+      _location = point;
+      _didLoad = true;
     } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(AkayBackend.friendlyError(error))),
-        );
-      }
+      if (mounted) showComingSoon(context, AkayBackend.friendlyError(error));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _phoneController.dispose();
-    _addressController.dispose();
-    _membersController.dispose();
-    super.dispose();
-  }
-
-  String? _validateName(String? value) {
-    final text = value?.trim() ?? '';
-    if (text.isEmpty) return 'Enter a household name.';
-    if (text.length > 80) return 'Use 80 characters or fewer.';
-    return null;
-  }
-
-  String? _validateAddress(String? value) {
-    final text = value?.trim() ?? '';
-    if (text.isEmpty) return 'Enter the household address.';
-    if (text.length > 200) return 'Use 200 characters or fewer.';
-    return null;
-  }
-
-  String? _validateMembers(String? value) {
-    final count = int.tryParse(value?.trim() ?? '');
-    if (count == null || count < 1 || count > 50) {
-      return 'Enter a whole number from 1 to 50.';
-    }
-    return null;
-  }
-
-  Future<void> _saveChanges() async {
-    if (_loading || !_hasHousehold || _saving) return;
+  Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-
+    final point = _location;
+    if (point == null || _barangay == null || _mobility == null) return;
     setState(() => _saving = true);
     try {
-      await AkayBackend.updateHouseholdProfile(
-        name: _nameController.text,
-        address: _addressController.text,
-        members: int.parse(_membersController.text.trim()),
-        mobilityNeed: _mobilityNeed,
+      final notes = _notes.text
+          .split('\n')
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
+          .toList();
+      if (notes.length > 20) throw 'Use no more than 20 responder notes.';
+      if (notes.any((line) => line.length > 200)) {
+        throw 'Each responder note must be 200 characters or fewer.';
+      }
+      await AkayBackend.saveHousehold(
+        name: _name.text.trim(),
+        barangay: _barangay!,
+        address: _address.text.trim(),
+        lat: point.latitude,
+        lng: point.longitude,
+        members: int.parse(_members.text.trim()),
+        mobilityNeed: _mobility!,
+        notes: notes,
       );
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      showComingSoon(context, 'Household profile saved.');
+      Navigator.of(context).pop();
     } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(AkayBackend.friendlyError(error))),
-      );
+      if (mounted) showComingSoon(context, AkayBackend.friendlyError(error));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
   }
 
   @override
+  void dispose() {
+    _name.dispose();
+    _address.dispose();
+    _members.dispose();
+    _notes.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Edit Household Profile')),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : !_hasHousehold
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'No household profile was found. Complete household setup first.',
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            )
-          : Form(
-              key: _formKey,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  TextFormField(
-                    controller: _nameController,
-                    textCapitalization: TextCapitalization.words,
-                    maxLength: 80,
-                    decoration: const InputDecoration(
-                      labelText: 'Household name',
-                    ),
-                    validator: _validateName,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _phoneController,
-                    readOnly: true,
-                    keyboardType: TextInputType.phone,
-                    decoration: const InputDecoration(
-                      labelText: 'Account mobile number',
-                      helperText:
-                          'This number is linked to sign-in and cannot be changed here.',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _addressController,
-                    textCapitalization: TextCapitalization.sentences,
-                    maxLength: 200,
-                    decoration: const InputDecoration(
-                      labelText: 'Complete household address',
-                    ),
-                    validator: _validateAddress,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _membersController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Household members',
-                    ),
-                    validator: _validateMembers,
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: _mobilityNeed,
-                    decoration: const InputDecoration(
-                      labelText: 'Mobility or equipment needs',
-                    ),
-                    items: _mobilityOptions
-                        .map(
-                          (option) => DropdownMenuItem(
-                            value: option,
-                            child: Text(option),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() => _mobilityNeed = value);
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 24),
-                  FilledButton(
-                    onPressed: _saving ? null : _saveChanges,
-                    child: _saving
-                        ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Save Changes'),
-                  ),
-                ],
+    if (_loading) {
+      return const AkayScreen(
+        child: Center(child: CircularProgressIndicator(color: kGreen)),
+      );
+    }
+    if (!_didLoad) {
+      return const AkayScreen(
+        child: StatusBanner(
+          tone: BannerTone.danger,
+          icon: Icons.error_outline,
+          message: 'The household profile could not be loaded.',
+        ),
+      );
+    }
+
+    return AkayScreen(
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const ScreenTitle(
+              label: 'HOUSEHOLD SETTINGS',
+              title: 'Edit household profile',
+              subtitle: 'Keep these details and responder notes up to date.',
+            ),
+            const SizedBox(height: 18),
+            TextFormField(
+              controller: _name,
+              maxLength: 80,
+              decoration: const InputDecoration(labelText: 'Household name'),
+              validator: (value) => value == null || value.trim().isEmpty
+                  ? 'Enter a household name.'
+                  : null,
+            ),
+            DropdownButtonFormField<String>(
+              value: _barangay,
+              decoration: const InputDecoration(labelText: 'Barangay'),
+              items: [
+                for (final value in _barangays)
+                  DropdownMenuItem(value: value, child: Text(value)),
+              ],
+              onChanged: (value) => setState(() => _barangay = value),
+              validator: (value) => value == null ? 'Choose your barangay.' : null,
+            ),
+            TextFormField(
+              controller: _address,
+              maxLength: 200,
+              decoration: const InputDecoration(labelText: 'Home address'),
+              validator: (value) => value == null || value.trim().isEmpty
+                  ? 'Enter your address.'
+                  : null,
+            ),
+            TextFormField(
+              controller: _members,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Household members'),
+              validator: (value) {
+                final n = int.tryParse(value ?? '');
+                return n == null || n < 1 || n > 50
+                    ? 'Enter a number from 1 to 50.'
+                    : null;
+              },
+            ),
+            DropdownButtonFormField<String>(
+              value: _mobility,
+              decoration: const InputDecoration(labelText: 'Mobility or assistance need'),
+              items: [
+                for (final value in _mobilityNeeds)
+                  DropdownMenuItem(value: value, child: Text(value)),
+              ],
+              onChanged: (value) => setState(() => _mobility = value),
+            ),
+            TextFormField(
+              controller: _notes,
+              minLines: 3,
+              maxLines: 6,
+              maxLength: 4000,
+              decoration: const InputDecoration(
+                labelText: 'Additional notes for responders',
+                hintText: 'One note per line, such as oxygen tank or needs help using stairs.',
+                alignLabelWithHint: true,
               ),
             ),
+            const SizedBox(height: 8),
+            StatusBanner(
+              tone: BannerTone.success,
+              icon: Icons.location_on_outlined,
+              message:
+                  'Saved map pin retained (${_location!.latitude.toStringAsFixed(4)}, ${_location!.longitude.toStringAsFixed(4)}).',
+            ),
+            const SizedBox(height: 16),
+            SolidAction(label: 'Save household profile', loading: _saving, onPressed: _save),
+            const SizedBox(height: 10),
+            OutlineAction(
+              label: 'Cancel',
+              onPressed: () => Navigator.of(context).maybePop(),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

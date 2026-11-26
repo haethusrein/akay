@@ -1,20 +1,21 @@
 import 'package:flutter/material.dart';
 import '../akay_backend.dart';
-import '../create_account_screens.dart'; // WelcomeScreen, VerifyCodeScreen, showComingSoon
+import '../create_account_screens.dart'; // WelcomeScreen, showComingSoon
 import '../main.dart';
 import 'admin_only.dart';
 import 'akay_nav.dart';
 import 'checkin_screen.dart';
+import 'edit_household_profile_screen.dart';
+import 'emergency_info_screen.dart';
+import 'evacuation_status_screen.dart';
+import 'nearby_sos_screens.dart';
 import 'responder_list_screen.dart';
 import 'screen_widgets.dart';
-import 'edit_household_profile_screen.dart';
-import 'settings_screen.dart';
-import '../l10n/app_strings.dart';
 
 // ============================================================
 // AKAY - Profile tab
 // The Figma export has no Profile design yet, so this is a simple version
-// in the same style: account details + verification + Log out.
+// in the same style: account details + Log out.
 //
 // Backend used: AkayBackend.myProfile(), AkayBackend.signOut()
 // ============================================================
@@ -42,38 +43,28 @@ class ProfileScreen extends StatelessWidget {
     }
   }
 
-  Future<void> _deactivateAccount(BuildContext context) async {
-  final sure = await confirmDialog(
-    context,
-    title: 'Deactivate your account?',
-    message:
-        'You will be signed out and will not be able to sign in again. '
-        'Your Firebase account will remain in the project.',
-    confirmLabel: 'Deactivate',
-    cancelLabel: 'Keep account',
-  );
-
-  if (!sure || !context.mounted) return;
-
-  try {
-    await AkayBackend.deactivateAccount();
-
-    if (!context.mounted) return;
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const WelcomeScreen()),
-      (route) => false,
+  Future<void> _deactivate(BuildContext context) async {
+    final sure = await confirmDialog(
+      context,
+      title: 'Deactivate this account?',
+      message:
+          'The account will be marked deleted and signed out. It will no longer be able to sign in.',
+      confirmLabel: 'Deactivate account',
+      cancelLabel: 'Keep account',
     );
-  } catch (e) {
-    if (context.mounted) {
-      showComingSoon(context, AkayBackend.friendlyError(e));
+    if (!sure || !context.mounted) return;
+    try {
+      await AkayBackend.deactivateAccount();
+      if (!context.mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const WelcomeScreen()),
+        (route) => false,
+      );
+    } catch (error) {
+      if (context.mounted) {
+        showComingSoon(context, AkayBackend.friendlyError(error));
+      }
     }
-  }
-}
-
-  void _openVerification(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const VerifyCodeScreen()),
-    );
   }
 
   @override
@@ -84,9 +75,9 @@ class ProfileScreen extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const ScreenTitle(
-            label: 'YOUR ACCOUNT',
-            title: 'Profile',
-            subtitle: 'Your details and verification status.',
+            label: 'APP PREFERENCES',
+            title: 'Settings',
+            subtitle: 'Manage your household, language, and account.',
           ),
           const SizedBox(height: 20),
           StreamBuilder(
@@ -97,7 +88,7 @@ class ProfileScreen extends StatelessWidget {
               final role = p?['role'] == 'respondent' ? 'Respondent' : 'Resident';
               final verified = p?['verified'] == true;
 
-return AppCard(
+              return AppCard(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -127,14 +118,9 @@ return AppCard(
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                           decoration: BoxDecoration(
-                            color: verified
-                                ? kLightGreen
-                                : const Color(0xFFFFF3DC),
+                            color: verified ? kLightGreen : const Color(0xFFFFF3DC),
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: Row(
@@ -142,9 +128,7 @@ return AppCard(
                               Icon(
                                 verified ? Icons.check : Icons.schedule,
                                 size: 14,
-                                color: verified
-                                    ? kGreen
-                                    : const Color(0xFF7A5A12),
+                                color: verified ? kGreen : const Color(0xFF7A5A12),
                               ),
                               const SizedBox(width: 4),
                               Text(
@@ -152,9 +136,7 @@ return AppCard(
                                 style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w600,
-                                  color: verified
-                                      ? kGreen
-                                      : const Color(0xFF7A5A12),
+                                  color: verified ? kGreen : const Color(0xFF7A5A12),
                                 ),
                               ),
                             ],
@@ -162,90 +144,77 @@ return AppCard(
                         ),
                       ],
                     ),
-                    const Divider(height: 24),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.edit_outlined),
-                      title: Text(AppStrings.tr('edit_household_profile')),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => EditHouseholdProfileScreen(
-                              currentData: p ?? {},
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.settings_outlined),
-                      title: Text(AppStrings.tr('settings')),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const SettingsScreen(),
-                          ),
-                        );
-                      },
-                    ),
                   ],
                 ),
               );
             },
           ),
-          const SizedBox(height: 12),
-          StreamBuilder(
-            stream: AkayBackend.myProfile(),
-            builder: (context, snapshot) {
-              final profile = snapshot.data?.data();
-              if (profile == null || profile['verified'] == true) {
-                return const SizedBox.shrink();
-              }
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const AppCard(
-                    child: Text(
-                      'Some account features require verification. '
-                      'Enter your verification code to unlock responder tools.',
-                      style: kGreyText,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  OutlineAction(
-                    label: 'Enter verification code',
-                    icon: Icons.verified_user_outlined,
-                    onPressed: () => _openVerification(context),
-                  ),
-                  const SizedBox(height: 20),
-                ],
-              );
-            },
+          const SizedBox(height: 20),
+          const Text('GENERAL SETTINGS', style: kSmallLabel),
+          const SizedBox(height: 10),
+          const _ToolTile(
+            icon: Icons.home_work_outlined,
+            title: 'Edit household profile',
+            subtitle: 'Update household details and responder notes',
+            page: EditHouseholdProfileScreen(),
           ),
-          // Responder tools require both the responder role and verification.
+          const _ToolTile(
+            icon: Icons.language,
+            title: 'Language',
+            subtitle: 'View available translations',
+            page: LanguageSettingsScreen(),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _SettingsAction(
+              icon: Icons.person_off_outlined,
+              title: 'Deactivate account',
+              subtitle: 'Mark this account as deleted and sign out',
+              onTap: () => _deactivate(context),
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text('SAFETY TOOLS', style: kSmallLabel),
+          const SizedBox(height: 10),
+          const _ToolTile(
+            icon: Icons.alt_route,
+            title: 'Update evacuation status',
+            subtitle: 'Still here, in transit, or evacuated',
+            page: EvacuationStatusScreen(),
+          ),
+          const _ToolTile(
+            icon: Icons.info_outline,
+            title: 'Emergency information',
+            subtitle: 'Works offline',
+            page: EmergencyInfoScreen(),
+          ),
+          const _ToolTile(
+            icon: Icons.bluetooth,
+            title: 'Nearby SOS (Bluetooth)',
+            subtitle: 'Share your request with nearby phones',
+            page: NearbySosScreen(),
+          ),
+          const _ToolTile(
+            icon: Icons.sync_alt,
+            title: 'Relay phone preview',
+            subtitle: 'What a neighbour sees when holding an SOS',
+            page: RelayPhoneScreen(),
+          ),
+          // Responder tools: shown to respondents (and while sample data is on).
           StreamBuilder(
             stream: AkayBackend.myProfile(),
             builder: (context, snapshot) {
-              final profile = snapshot.data?.data();
-              final isVerifiedResponder =
-                  profile?['role'] == 'respondent' &&
-                  profile?['verified'] == true;
-
-              if (!isVerifiedResponder) return const SizedBox.shrink();
-
+              final isResponder = snapshot.data?.data()?['role'] == 'respondent';
+              if (!isResponder && !kShowSampleData) return const SizedBox.shrink();
               return const Column(
                 children: [
-                  ToolTile(
+                  _ToolTile(
                     icon: Icons.groups_outlined,
                     title: 'Responder dashboard',
                     subtitle: 'Households needing help',
                     page: ResponderListScreen(),
                   ),
-                  ToolTile(
+                  _ToolTile(
                     icon: Icons.fact_check_outlined,
                     title: 'Evacuation-center check-in',
                     subtitle: 'Confirm a household arrived',
@@ -262,7 +231,7 @@ return AppCard(
               if (!AkayBackend.isAdminProfile(snapshot.data?.data())) {
                 return const SizedBox.shrink();
               }
-              return const ToolTile(
+              return const _ToolTile(
                 icon: Icons.admin_panel_settings_outlined,
                 title: 'Admin',
                 subtitle: 'Pins, accounts, 911 calls, error log',
@@ -276,13 +245,168 @@ return AppCard(
             icon: Icons.logout,
             onPressed: () => _logOut(context),
           ),
-                    const SizedBox(height: 10),
-          OutlineAction(
-            label: 'Deactivate account',
-            icon: Icons.person_off_outlined,
-            onPressed: () => _deactivateAccount(context),
+        ],
+      ),
+    );
+  }
+}
+
+/// A nested language page is ready for translated app resources. English is
+/// currently the only translation shipped in this repository.
+class LanguageSettingsScreen extends StatelessWidget {
+  const LanguageSettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return AkayScreen(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const ScreenTitle(
+            label: 'APP PREFERENCES',
+            title: 'Language',
+            subtitle: 'Choose from translations included with the app.',
+          ),
+          const SizedBox(height: 16),
+          AppCard(
+            child: Row(
+              children: [
+                const IconBox(icon: Icons.language, bg: kLightGreen),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('English', style: TextStyle(color: kTextDark, fontWeight: FontWeight.w700)),
+                      SizedBox(height: 3),
+                      Text('Current and available', style: kGreyText),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.check_circle, color: kGreen),
+              ],
+            ),
+          ),
+          const StatusBanner(
+            tone: BannerTone.warning,
+            icon: Icons.info_outline,
+            message:
+                'No other translated language is included in this build yet.',
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _SettingsAction extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _SettingsAction({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: kBorder),
+          ),
+          child: Row(
+            children: [
+              IconBox(icon: icon, bg: const Color(0xFFFDE9E5), color: kRed, size: 40),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: const TextStyle(fontWeight: FontWeight.w600, color: kTextDark)),
+                    const SizedBox(height: 2),
+                    Text(subtitle, style: kGreyText),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: kTextDark),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// One tappable row that opens another screen.
+class _ToolTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Widget page;
+
+  const _ToolTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.page,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => page),
+          ),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: kBorder),
+            ),
+            child: Row(
+              children: [
+                IconBox(icon: icon, bg: kLightGreen, size: 40),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: kTextDark,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(subtitle, style: kGreyText),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, size: 20, color: kTextDark),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

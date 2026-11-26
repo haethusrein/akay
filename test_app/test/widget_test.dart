@@ -98,7 +98,9 @@ void main() {
       await tester.pump();
 
       expect(find.text('Enter a household name'), findsOneWidget);
-      expect(find.text('Select your barangay'), findsOneWidget);
+      // The label appears once as the picker placeholder and once as the
+      // validation message after submitting the empty form.
+      expect(find.text('Select your barangay'), findsNWidgets(2));
       expect(find.text('Enter your address'), findsOneWidget);
       expect(find.text('Pin your exact home location'), findsOneWidget);
       expect(find.byType(VerifyCodeScreen), findsNothing);

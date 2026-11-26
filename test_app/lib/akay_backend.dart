@@ -221,7 +221,7 @@ class AkayBackend {
     }, SetOptions(merge: true));
   }
 
-  /// Updates the editable household details without changing its barangay,
+  /// Updates editable household details without changing its barangay,
   /// pinned home location, or private account mobile number.
   static Future<void> updateHouseholdProfile({
     required String name,
@@ -308,7 +308,8 @@ class AkayBackend {
   }
 
   /// Verify Code screen -> Verify.
-  /// Codes are created by hand in the console: verificationCodes/<6-digit code> { role, used: false, expiresAt }
+  /// Codes are created by hand in the console:
+  /// verificationCodes/<6-digit code> { role, used: false, expiresAt }
   static Future<void> verifyCode(String raw) async {
     final code = raw.replaceAll(RegExp(r'\D'), '');
     if (code.length != 6) throw 'Invalid or already used code.';
@@ -428,7 +429,6 @@ class AkayBackend {
   }
 
   /// Requester cancels.
-  /// Requester cancels.
   static Future<void> cancelRequest(String id) async {
     final ref = _db.doc('requests/$id');
     final r = (await ref.get()).data();
@@ -456,7 +456,6 @@ class AkayBackend {
     await batch.commit();
   }
 
-  /// Verified responder accepts. If two try at once, the second fails (rules only allow pending -> matched).
   /// Verified responder accepts. If two try at once, the second fails (rules only allow pending -> matched).
   /// A responder can hold one active job at a time.
   static Future<void> acceptRequest(String id) async {
@@ -496,7 +495,6 @@ class AkayBackend {
     }
   }
 
-  /// Requester or the assigned responder marks it resolved.
   /// Requester or the assigned responder marks it resolved.
   static Future<void> resolveRequest(String id) async {
     final ref = _db.doc('requests/$id');
@@ -678,7 +676,7 @@ class AkayBackend {
       });
 
   /// Responder: evacuation-center check-in (wireframe 12).
-  /// Works offline: Firestore keeps the write on the phone and sends it later.
+  /// Works offline: Firestore keeps the write on the phone and sends it when online.
   /// We do NOT await it for that reason; use [hasPendingWrites] to show "Waiting to sync".
   static Future<void> checkInHousehold({
     required String household,
@@ -745,6 +743,34 @@ class AkayBackend {
 
   static Stream<DocumentSnapshot<Map<String, dynamic>>> myHousehold() =>
       _db.doc('households/$uid').snapshots();
+
+  /// Private emergency details for the signed-in user. These are never copied
+  /// into a responder request automatically.
+  static Stream<DocumentSnapshot<Map<String, dynamic>>> myEmergencyProfile() =>
+      _db.doc('emergencyProfiles/$uid').snapshots();
+
+  static Future<void> saveEmergencyProfile({
+    required String conditions,
+    required String medications,
+    required String allergies,
+    required String contactName,
+    required String contactPhone,
+    required String instructions,
+  }) async {
+    final me = uid;
+    if (me == null) {
+      throw 'Sign in before saving emergency details.';
+    }
+    await _db.doc('emergencyProfiles/$me').set({
+      'conditions': conditions.trim(),
+      'medications': medications.trim(),
+      'allergies': allergies.trim(),
+      'contactName': contactName.trim(),
+      'contactPhone': contactPhone.trim(),
+      'instructions': instructions.trim(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
 
   /// "Community updates" (you post these by hand in the console: collection `updates`).
   static Stream<QuerySnapshot<Map<String, dynamic>>> communityUpdates() => _db
