@@ -122,31 +122,11 @@ class _RequestsScreenState extends State<RequestsScreen> {
                     style: TextStyle(fontSize: 22, color: kTextDark),
                   ),
                   const SizedBox(height: 12),
-                  if (past.isEmpty &&
-                      !(kShowSampleData && activeRequest == null))
+                  if (past.isEmpty)
                     const AppCard(
                       child: Text(
                         'No past requests yet.',
                         style: kGreyText,
-                      ),
-                    )
-                  else if (past.isEmpty)
-                    // Figma sample rows.
-                    const AppCard(
-                      child: Column(
-                        children: [
-                          _HistoryRow(
-                            title: 'Flood assistance',
-                            subtitle: 'Resolved · Santos Household',
-                            resolved: true,
-                          ),
-                          Divider(height: 28, color: kBorder),
-                          _HistoryRow(
-                            title: 'Medical assistance',
-                            subtitle: 'Resolved · Santos Household',
-                            resolved: true,
-                          ),
-                        ],
                       ),
                     )
                   else

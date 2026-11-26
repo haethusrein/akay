@@ -178,16 +178,26 @@ class AkayBackend {
   }
 
   /// Phone number of the responder assigned to this user's active request.
+    /// Phone number of the responder assigned to this user's active request.
   static Future<String?> assignedResponderPhone() async {
     final me = uid;
     if (me == null) return null;
-    final pointer = await _db.doc('activeRequests/$me').get();
-    final requestId = pointer.data()?['requestId']?.toString();
-    if (requestId == null || requestId.isEmpty) return null;
-    final request = await _db.doc('requests/$requestId').get();
-    final data = request.data();
-    if (data == null || data['status'] != 'matched') return null;
-    final phone = data['responderMobile']?.toString().trim();
+
+    // Read only this user's matched requests. The rules allow request owners
+    // to read their own request documents; activeRequests is intentionally
+    // unreadable by clients.
+    final matchedRequests = await _db
+        .collection('requests')
+        .where('userId', isEqualTo: me)
+        .where('status', isEqualTo: 'matched')
+        .limit(1)
+        .get();
+
+    if (matchedRequests.docs.isEmpty) return null;
+
+    final phone =
+        matchedRequests.docs.first.data()['responderMobile']?.toString().trim();
+
     return phone == null || phone.isEmpty ? null : phone;
   }
 
