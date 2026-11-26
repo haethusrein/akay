@@ -14,7 +14,7 @@ import 'track_response_screen.dart';
 // Top card  = your active request ("Finding a verified responder")
 // List      = past requests (resolved / cancelled)
 //
-// Backend used: AkayBackend.myRequests()  (live, newest first)
+// Backend used: AkayBackend.myRequests() (live, newest first)
 // ============================================================
 class RequestsScreen extends StatefulWidget {
   const RequestsScreen({super.key});
@@ -46,7 +46,7 @@ class _RequestsScreenState extends State<RequestsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // title + "New help request" pill
+          // Title and "New help request" pill.
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -54,7 +54,8 @@ class _RequestsScreenState extends State<RequestsScreen> {
                 child: ScreenTitle(
                   label: 'ASSISTANCE HISTORY',
                   title: 'Requests',
-                  subtitle: 'Track current help requests and review household history.',
+                  subtitle:
+                      'Track current help requests and review household history.',
                 ),
               ),
               const SizedBox(width: 8),
@@ -67,7 +68,6 @@ class _RequestsScreenState extends State<RequestsScreen> {
             ],
           ),
           const SizedBox(height: 24),
-
           StreamBuilder(
             stream: AkayBackend.myRequests(),
             builder: (context, snapshot) {
@@ -78,6 +78,7 @@ class _RequestsScreenState extends State<RequestsScreen> {
                   message: AkayBackend.friendlyError(snapshot.error!),
                 );
               }
+
               if (!snapshot.hasData) {
                 return const Padding(
                   padding: EdgeInsets.only(top: 60),
@@ -87,10 +88,16 @@ class _RequestsScreenState extends State<RequestsScreen> {
 
               final all = snapshot.data!;
               final active = all.where(
-                (r) => r['status'] == 'pending' || r['status'] == 'matched',
+                (request) =>
+                    request['status'] == 'pending' ||
+                    request['status'] == 'matched',
               );
               final past = all
-                  .where((r) => r['status'] == 'resolved' || r['status'] == 'cancelled')
+                  .where(
+                    (request) =>
+                        request['status'] == 'resolved' ||
+                        request['status'] == 'cancelled',
+                  )
                   .toList();
               final activeRequest = active.isEmpty ? null : active.first;
 
@@ -101,14 +108,13 @@ class _RequestsScreenState extends State<RequestsScreen> {
                     _ActiveCard(
                       request: activeRequest,
                       onRefresh: () {
-                        // The list is already live; this just confirms it to the user.
+                        // The list is already live; this confirms its current status.
                         setState(() {});
                         showComingSoon(context, 'Status is up to date.');
                       },
                     ),
                     const SizedBox(height: 24),
                   ],
-
                   const Text('PREVIOUS ACTIVITY', style: kSmallLabel),
                   const SizedBox(height: 6),
                   const Text(
@@ -116,8 +122,8 @@ class _RequestsScreenState extends State<RequestsScreen> {
                     style: TextStyle(fontSize: 22, color: kTextDark),
                   ),
                   const SizedBox(height: 12),
-
-                  if (past.isEmpty && !(kShowSampleData && activeRequest == null))
+                  if (past.isEmpty &&
+                      !(kShowSampleData && activeRequest == null))
                     const AppCard(
                       child: Text(
                         'No past requests yet.',
@@ -125,7 +131,7 @@ class _RequestsScreenState extends State<RequestsScreen> {
                       ),
                     )
                   else if (past.isEmpty)
-                    // Figma sample rows
+                    // Figma sample rows.
                     const AppCard(
                       child: Column(
                         children: [
@@ -148,9 +154,12 @@ class _RequestsScreenState extends State<RequestsScreen> {
                       child: Column(
                         children: [
                           for (var i = 0; i < past.length; i++) ...[
-                            if (i > 0) const Divider(height: 28, color: kBorder),
+                            if (i > 0)
+                              const Divider(height: 28, color: kBorder),
                             _HistoryRow(
-                              title: _historyTitle((past[i]['type'] ?? '').toString()),
+                              title: _historyTitle(
+                                (past[i]['type'] ?? '').toString(),
+                              ),
                               subtitle:
                                   '${_cap((past[i]['status'] ?? '').toString())} · ${(past[i]['household'] is Map ? past[i]['household']['name'] : null) ?? 'Household'}',
                               resolved: past[i]['status'] == 'resolved',
@@ -181,7 +190,10 @@ class _ActiveCard extends StatelessWidget {
   final Map<String, dynamic> request;
   final VoidCallback onRefresh;
 
-  const _ActiveCard({required this.request, required this.onRefresh});
+  const _ActiveCard({
+    required this.request,
+    required this.onRefresh,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -192,7 +204,9 @@ class _ActiveCard extends StatelessWidget {
       borderRadius: BorderRadius.circular(24),
       onTap: () => Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => TrackResponseScreen(requestId: request['id'].toString()),
+          builder: (_) => TrackResponseScreen(
+            requestId: request['id'].toString(),
+          ),
         ),
       ),
       child: Container(
@@ -276,9 +290,7 @@ class _ActiveCard extends StatelessWidget {
                     label: 'Call 911',
                     icon: Icons.phone_outlined,
                     danger: true,
-                    // TODO: open the phone dialer (needs the url_launcher package).
-                    onPressed: () =>
-                        showComingSoon(context, 'Calling 911 comes later.'),
+                    onPressed: () => callHotline(context),
                   ),
                 ),
               ],
@@ -305,27 +317,36 @@ class _SoftButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = danger ? kRed : kGreen;
+    final foreground = danger ? kRed : kGreen;
+
     return SizedBox(
       height: 48,
       child: ElevatedButton(
         onPressed: onPressed,
         style: ElevatedButton.styleFrom(
           backgroundColor: danger ? const Color(0xFFFDE9E5) : kLightGreen,
-          foregroundColor: fg,
+          foregroundColor: foreground,
           elevation: 0,
           padding: const EdgeInsets.symmetric(horizontal: 8),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            if (icon != null) ...[Icon(icon, size: 16), const SizedBox(width: 6)],
+            if (icon != null) ...[
+              Icon(icon, size: 16),
+              const SizedBox(width: 6),
+            ],
             Flexible(
               child: Text(
                 label,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                ),
               ),
             ),
           ],
@@ -365,13 +386,19 @@ class _HistoryRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(fontSize: 16, color: kTextDark)),
+              Text(
+                title,
+                style: const TextStyle(fontSize: 16, color: kTextDark),
+              ),
               const SizedBox(height: 4),
               Text(subtitle, style: kGreyText),
               const SizedBox(height: 10),
               InkWell(
                 onTap: onTap ??
-                    () => showComingSoon(context, 'Sample item. No details yet.'),
+                    () => showComingSoon(
+                      context,
+                      'Sample item. No details yet.',
+                    ),
                 child: const Padding(
                   padding: EdgeInsets.symmetric(vertical: 6),
                   child: Text(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../l10n/app_strings.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -19,16 +20,21 @@ class SettingsScreen extends StatelessWidget {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 8),
-              ...AppLanguage.values.map(
-                (lang) => RadioListTile<AppLanguage>(
-                  title: Text(lang.label),
-                  value: lang,
-                  groupValue: selectedLang,
-                  onChanged: (value) {
-                    if (value != null) {
-                      AppStrings.current.value = value;
-                    }
-                  },
+              RadioGroup<AppLanguage>(
+                groupValue: selectedLang,
+                onChanged: (value) {
+                  if (value != null) {
+                    AppStrings.current.value = value;
+                  }
+                },
+                child: Column(
+                  children: [
+                    for (final lang in AppLanguage.values)
+                      RadioListTile<AppLanguage>(
+                        title: Text(lang.label),
+                        value: lang,
+                      ),
+                  ],
                 ),
               ),
             ],
