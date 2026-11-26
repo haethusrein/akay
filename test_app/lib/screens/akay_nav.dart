@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-
+import 'dart:async';
+import '../internet_probe.dart';
 import '../akay_backend.dart';
 import '../create_account_screens.dart'; // kAmber, showComingSoon
 import '../main.dart'; // colors, HomeScreen
@@ -105,29 +106,103 @@ class TabScaffold extends StatelessWidget {
 }
 
 // ---------- Green "Connected" strip ----------
-class ConnectedBanner extends StatelessWidget {
+class ConnectedBanner extends StatefulWidget {
   const ConnectedBanner({super.key});
 
   @override
+  State<ConnectedBanner> createState() => _ConnectedBannerState();
+}
+
+class _ConnectedBannerState extends State<ConnectedBanner>
+    with WidgetsBindingObserver {
+  bool? _online;
+  bool _checking = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+
+    _refresh();
+    _timer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _refresh(),
+    );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refresh();
+    }
+  }
+
+  Future<void> _refresh() async {
+    if (_checking) return;
+    _checking = true;
+
+    try {
+      final result = await hasInternetAccess();
+      if (mounted && result != _online) {
+        setState(() => _online = result);
+      }
+    } finally {
+      _checking = false;
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final checking = _online == null;
+    final connected = _online == true;
+    final color = checking ? kTextGrey : (connected ? kGreen : kRed);
+    final background = checking
+        ? const Color(0xFFF1F3F2)
+        : (connected ? kLightGreen : const Color(0xFFFDE9E5));
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: kLightGreen,
+        color: background,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFCFE5DA)),
+        border: Border.all(
+          color: connected
+              ? const Color(0xFFCFE5DA)
+              : color.withValues(alpha: 0.25),
+        ),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          Icon(Icons.wifi, size: 16, color: kGreen),
-          SizedBox(width: 8),
-          Text(
-            'Connected',
-            style: TextStyle(fontWeight: FontWeight.w600, color: kGreen),
+          Icon(
+            connected ? Icons.wifi : Icons.wifi_off,
+            size: 16,
+            color: color,
           ),
-          SizedBox(width: 12),
+          const SizedBox(width: 8),
+          Text(
+            checking
+                ? 'Checking connection'
+                : (connected ? 'Connected' : 'No internet'),
+            style: TextStyle(fontWeight: FontWeight.w600, color: color),
+          ),
+          const SizedBox(width: 12),
           Flexible(
-            child: Text('Emergency network active', style: kGreyText),
+            child: Text(
+              checking
+                  ? 'Checking internet access'
+                  : (connected
+                      ? 'Emergency network active'
+                      : 'Some features may not sync'),
+              style: kGreyText,
+            ),
           ),
         ],
       ),
