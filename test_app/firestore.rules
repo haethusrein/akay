@@ -1,0 +1,526 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
+    function userData(uid) { return get(/databases/$(database)/documents/users/$(uid)).data; }
+    function isVerifiedResponder() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userData(request.auth.uid).role == 'respondent'
+        && userData(request.auth.uid).verified == true;
+    }
+    function isVerified() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userData(request.auth.uid).verified == true;
+    }
+    // The single admin account (admin, 00000000) is created by hand in the Firebase console.
+    // Nobody can sign up with this mobile: the users create rule only accepts +639XXXXXXXXX.
+    function isAdmin() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && userData(request.auth.uid).mobile == '00000000';
+    }
+    function currentFloodEventId() {
+      return exists(/databases/$(database)/documents/config/floodEmergency)
+        ? get(/databases/$(database)/documents/config/floodEmergency).data.eventId
+        : '';
+    }
+    function floodEmergencyActive() {
+      return exists(/databases/$(database)/documents/config/floodEmergency)
+        && get(/databases/$(database)/documents/config/floodEmergency).data.active == true
+        && get(/databases/$(database)/documents/config/floodEmergency).data.resetComplete == true
+        && get(/databases/$(database)/documents/config/floodEmergency).data.eventId is string
+        && get(/databases/$(database)/documents/config/floodEmergency).data.eventId.size() > 0;
+    }
+    function codePath(code) { return /databases/$(database)/documents/verificationCodes/$(code); }
+    function reqAfter(id) { return getAfter(/databases/$(database)/documents/requests/$(id)).data; }
+    function reqNow(id) { return get(/databases/$(database)/documents/requests/$(id)).data; }
+    function hh() { return get(/databases/$(database)/documents/households/$(request.auth.uid)).data; }
+    function inPhilippines(point) {
+      return point is latlng
+        && point.latitude() >= 4 && point.latitude() <= 22
+        && point.longitude() >= 116 && point.longitude() <= 127;
+    }
+
+    // ---------- accounts ----------
+    match /users/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+      // sign-up: you can only create your own profile, and never as already verified
+      allow create: if isSelf(uid)
+        && request.resource.data.keys().hasOnly(['mobile', 'role', 'verified', 'createdAt'])
+        && request.resource.data.mobile is string
+        && request.resource.data.mobile.matches('^\\+639[0-9]{9}$')
+        && request.resource.data.role in ['resident', 'respondent']
+        && request.resource.data.verified == false
+        && request.resource.data.createdAt == request.time;
+      // the ONLY allowed update: becoming verified with an unused code of your own role
+      allow update: if isSelf(uid) && (
+        // Verification with a matching, unused one-time code.
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['verified', 'verifiedWith'])
+          && resource.data.verified == false
+          && request.resource.data.verified == true
+          && request.resource.data.verifiedWith is string
+          && get(codePath(request.resource.data.verifiedWith)).data.used == false
+          && get(codePath(request.resource.data.verifiedWith)).data.role == resource.data.role
+          && (!('forUid' in get(codePath(request.resource.data.verifiedWith)).data)
+              || get(codePath(request.resource.data.verifiedWith)).data.forUid == request.auth.uid)
+          && getAfter(codePath(request.resource.data.verifiedWith)).data.used == true
+          && getAfter(codePath(request.resource.data.verifiedWith)).data.usedBy == request.auth.uid)
+        // Soft-delete: keep the Firebase Auth account, mark its profile deleted.
+        || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['accountStatus', 'deletedAt'])
+          && request.resource.data.accountStatus == 'deleted'
+          && request.resource.data.deletedAt == request.time)
+      );
+      allow delete: if false;
+    }
+
+    // Codes are created by the admin account on the Admin screen (or by hand in the console).
+    // Other users cannot read them; they can only redeem one together with their own profile update.
+    match /verificationCodes/{code} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && code.matches('^[0-9]{6}$')
+        && request.resource.data.keys().hasOnly(['role', 'used', 'expiresAt', 'createdAt', 'createdBy', 'demo', 'forUid', 'forMobile'])
+        && request.resource.data.keys().hasAll(['role', 'used', 'expiresAt', 'createdAt', 'createdBy', 'demo'])
+        && request.resource.data.role in ['resident', 'respondent']
+        && request.resource.data.used == false
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt <= request.time + duration.value(2, 'd')
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.demo is bool
+        && (!('forUid' in request.resource.data) || request.resource.data.forUid is string)
+        && (!('forMobile' in request.resource.data) || request.resource.data.forMobile is string);
+      // the admin can revoke a pin that nobody has used yet
+      allow delete: if isAdmin() && resource.data.used == false;
+      allow update: if signedIn()
+        && resource.data.used == false
+        && resource.data.expiresAt > request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy'])
+        && request.resource.data.used == true
+        && request.resource.data.usedBy == request.auth.uid
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.verifiedWith == code;
+    }
+
+    match /households/{uid} {
+      allow read: if isSelf(uid);
+      allow create, update: if isSelf(uid)
+        && request.resource.data.keys().hasOnly([
+          'name', 'barangay', 'address', 'location', 'members',
+          'mobilityNeed', 'notes', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'name', 'barangay', 'address', 'location', 'members',
+          'mobilityNeed', 'notes', 'updatedAt'
+        ])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 1
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.barangay in [
+          'Barangay Bagontaas', 'Barangay Batangan', 'Barangay Colonia',
+          'Barangay Lumbo', 'Barangay Mailag', 'Barangay Poblacion'
+        ]
+        && request.resource.data.address is string
+        && request.resource.data.address.size() >= 1
+        && request.resource.data.address.size() <= 200
+        && inPhilippines(request.resource.data.location)
+        && request.resource.data.members is int
+        && request.resource.data.members >= 1 && request.resource.data.members <= 50
+        && request.resource.data.mobilityNeed in [
+          'None', 'Wheelchair required', 'Bedridden', 'Oxygen tank',
+          'Needs carrying / stretcher', 'Infant or young child', 'Other'
+        ]
+        && request.resource.data.notes is list
+        && request.resource.data.notes.size() <= 20
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // Personal emergency details are private to the account owner. They are
+    // not exposed to responders unless a separate, explicit sharing flow is added.
+    match /emergencyProfiles/{uid} {
+      allow read: if isSelf(uid);
+      allow create, update: if isSelf(uid)
+        && request.resource.data.keys().hasOnly([
+          'conditions', 'medications', 'allergies', 'contactName',
+          'contactPhone', 'instructions', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'conditions', 'medications', 'allergies', 'contactName',
+          'contactPhone', 'instructions', 'updatedAt'
+        ])
+        && request.resource.data.conditions is string
+        && request.resource.data.conditions.size() <= 500
+        && request.resource.data.medications is string
+        && request.resource.data.medications.size() <= 500
+        && request.resource.data.allergies is string
+        && request.resource.data.allergies.size() <= 500
+        && request.resource.data.contactName is string
+        && request.resource.data.contactName.size() <= 80
+        && request.resource.data.contactPhone is string
+        && request.resource.data.contactPhone.size() <= 24
+        && request.resource.data.instructions is string
+        && request.resource.data.instructions.size() <= 500
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    // Responders switch "online" and share a coarse (~1 km) position (counted in Community status).
+    // Readable by verified users only; writes are limited to known keys, server time and Philippine coordinates.
+    match /presence/{uid} {
+      allow read: if isVerified();
+      allow create, update: if isSelf(uid) && isVerifiedResponder()
+        && request.resource.data.keys().hasOnly(['online', 'lat', 'lng', 'updatedAt'])
+        && request.resource.data.keys().hasAll(['online', 'updatedAt'])
+        && request.resource.data.online is bool
+        && request.resource.data.updatedAt == request.time
+        && (('lat' in request.resource.data) == ('lng' in request.resource.data))
+        && (!('lat' in request.resource.data)
+            || (request.resource.data.lat is number
+                && request.resource.data.lng is number
+                && request.resource.data.lat >= 4 && request.resource.data.lat <= 22
+                && request.resource.data.lng >= 116 && request.resource.data.lng <= 127));
+      allow delete: if false;
+    }
+
+    // ---------- emergency requests ----------
+    // Coarse view only: safe for pending responders to list.
+    match /requests/{id} {
+      allow read: if signedIn() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.responderId == request.auth.uid ||
+        (isVerifiedResponder() && resource.data.status == 'pending') ||
+        isAdmin()
+      );
+
+      allow create: if signedIn()
+        && userData(request.auth.uid).role == 'resident'
+        && exists(/databases/$(database)/documents/households/$(request.auth.uid))
+        && request.resource.data.keys().hasOnly(['userId', 'type', 'barangay', 'location', 'status', 'responderId', 'responderMobile', 'createdAt', 'updatedAt'])
+        && request.resource.data.keys().hasAll(['userId', 'type', 'barangay', 'location', 'status', 'responderId', 'responderMobile', 'createdAt', 'updatedAt'])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.responderId == null
+        && request.resource.data.responderMobile == null
+        && request.resource.data.type in ['flood', 'medical', 'fire', 'other']
+        && inPhilippines(request.resource.data.location)
+        && request.resource.data.barangay == hh().barangay
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/activeRequests/$(request.auth.uid)).data.requestId == id
+        && existsAfter(/databases/$(database)/documents/requestDetails/$(id));
+
+      allow update: if signedIn() && (
+        // requester cancels
+        (resource.data.userId == request.auth.uid
+          && resource.data.status in ['pending', 'matched']
+          && request.resource.data.status == 'cancelled'
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']))
+        // verified responder accepts (only while still pending => only one can win)
+        // must use their own profile number, cannot accept their own request, and must take the one active-job slot
+        || ((isVerifiedResponder() || isAdmin())
+          && resource.data.status == 'pending'
+          && resource.data.userId != request.auth.uid
+          && request.resource.data.status == 'matched'
+          && request.resource.data.responderId == request.auth.uid
+          && request.resource.data.responderMobile == userData(request.auth.uid).mobile
+          && request.resource.data.matchedAt == request.time
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'responderId', 'responderMobile', 'matchedAt', 'updatedAt'])
+          && getAfter(/databases/$(database)/documents/responderActive/$(request.auth.uid)).data.requestId == id)
+        // assigned responder releases the request back to pending and frees their slot
+        || (resource.data.responderId == request.auth.uid
+          && resource.data.status == 'matched'
+          && request.resource.data.status == 'pending'
+          && request.resource.data.responderId == null
+          && request.resource.data.responderMobile == null
+          && request.resource.data.matchedAt == null
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'responderId', 'responderMobile', 'matchedAt', 'updatedAt'])
+          && !existsAfter(/databases/$(database)/documents/responderActive/$(request.auth.uid)))
+        // requester re-opens a request whose responder has not resolved it within 15 minutes
+        || (resource.data.userId == request.auth.uid
+          && resource.data.status == 'matched'
+          && request.time > resource.data.matchedAt + duration.value(15, 'm')
+          && request.resource.data.status == 'pending'
+          && request.resource.data.responderId == null
+          && request.resource.data.responderMobile == null
+          && request.resource.data.matchedAt == null
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['status', 'responderId', 'responderMobile', 'matchedAt', 'updatedAt']))
+        // requester or assigned responder resolves
+        || ((resource.data.userId == request.auth.uid || resource.data.responderId == request.auth.uid)
+          && resource.data.status == 'matched'
+          && request.resource.data.status == 'resolved'
+          && request.resource.data.resolvedAt == request.time
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'resolvedAt', 'updatedAt']))
+      );
+      allow delete: if false;
+    }
+
+    // Exact location, address, description and household snapshot.
+    // Readable by the requester, and by the assigned responder only while the request is matched.
+    match /requestDetails/{id} {
+      allow read: if signedIn() && (
+        resource.data.userId == request.auth.uid ||
+        (reqNow(id).responderId == request.auth.uid && reqNow(id).status == 'matched')
+      );
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['userId', 'address', 'location', 'description', 'household', 'createdAt'])
+        && request.resource.data.keys().hasAll(['userId', 'address', 'location', 'description', 'household', 'createdAt'])
+        && request.resource.data.userId == request.auth.uid
+        && reqAfter(id).userId == request.auth.uid
+        && reqAfter(id).status == 'pending'
+        && inPhilippines(request.resource.data.location)
+        && request.resource.data.address is string
+        && request.resource.data.address.size() <= 300
+        && request.resource.data.address == hh().address
+        && (request.resource.data.description == null
+            || (request.resource.data.description is string && request.resource.data.description.size() <= 500))
+        && request.resource.data.household is map
+        && request.resource.data.household.keys().hasOnly(['name', 'members', 'mobilityNeed', 'notes'])
+        && request.resource.data.household.name == hh().name
+        && request.resource.data.household.members == hh().members
+        && request.resource.data.household.mobilityNeed == hh().mobilityNeed
+        && request.resource.data.household.notes == hh().notes
+        && request.resource.data.household.notes.size() <= 20
+        && request.resource.data.createdAt == request.time;
+
+      allow update, delete: if false;
+    }
+
+    // One pointer per user with an active request; created with the request, deleted when it ends.
+    match /activeRequests/{uid} {
+      allow read: if false;
+      allow create: if isSelf(uid)
+        && request.resource.data.keys().hasOnly(['requestId'])
+        && request.resource.data.requestId is string
+        && reqAfter(request.resource.data.requestId).userId == request.auth.uid
+        && reqAfter(request.resource.data.requestId).status == 'pending';
+      allow update: if false;
+      allow delete: if signedIn()
+        && reqAfter(resource.data.requestId).status in ['cancelled', 'resolved']
+        && (request.auth.uid == uid || request.auth.uid == reqAfter(resource.data.requestId).responderId);
+    }
+
+    // One pointer per responder with an accepted job; created with the accept, deleted when the job ends or is released.
+    match /responderActive/{uid} {
+      allow read: if false;
+      allow create: if isSelf(uid) && (isVerifiedResponder() || isAdmin())
+        && request.resource.data.keys().hasOnly(['requestId'])
+        && request.resource.data.requestId is string
+        && reqAfter(request.resource.data.requestId).responderId == request.auth.uid
+        && reqAfter(request.resource.data.requestId).status == 'matched';
+      allow update: if false;
+      allow delete: if signedIn()
+        && (
+          (reqAfter(resource.data.requestId).status in ['cancelled', 'resolved']
+            && (request.auth.uid == uid || request.auth.uid == reqAfter(resource.data.requestId).userId))
+          || (reqAfter(resource.data.requestId).responderId != uid
+            && (request.auth.uid == uid || request.auth.uid == reqAfter(resource.data.requestId).userId))
+        );
+    }
+
+    // Coarse (~1 km) map pins for the Community screen. No user identifier.
+    // The pin id equals the request id; ownership is checked against that request.
+    // A pin can only be created together with a real pending request, and removed once the request leaves pending.
+    match /publicMarkers/{id} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['type', 'status', 'lat', 'lng', 'createdAt', 'expiresAt'])
+        && request.resource.data.keys().hasAll(['type', 'status', 'lat', 'lng', 'createdAt', 'expiresAt'])
+        && (reqAfter(id).userId == request.auth.uid
+            || (reqNow(id).responderId == request.auth.uid && (isVerifiedResponder() || isAdmin())))
+        && reqAfter(id).status == 'pending'
+        && request.resource.data.type == reqAfter(id).type
+        && request.resource.data.status == 'pending'
+        && request.resource.data.lat is number
+        && request.resource.data.lng is number
+        && request.resource.data.lat >= 4 && request.resource.data.lat <= 22
+        && request.resource.data.lng >= 116 && request.resource.data.lng <= 127
+        && math.abs(request.resource.data.lat - reqAfter(id).location.latitude()) <= 0.01
+        && math.abs(request.resource.data.lng - reqAfter(id).location.longitude()) <= 0.01
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt <= request.time + duration.value(2, 'd');
+      allow update: if false;
+      allow delete: if signedIn()
+        && reqAfter(id).status in ['matched', 'cancelled', 'resolved']
+        && (reqAfter(id).userId == request.auth.uid || reqAfter(id).responderId == request.auth.uid);
+    }
+
+    // ---------- evacuation, check-in, declines, reports ----------
+    match /evacuationStatus/{uid} {
+      // Residents can read their own record; admins can view the roster.
+      allow read: if isSelf(uid) || isAdmin();
+      allow create: if isSelf(uid)
+        && floodEmergencyActive()
+        && request.resource.data.keys().hasOnly(['status', 'updatedAt', 'eventId'])
+        && request.resource.data.keys().hasAll(['status', 'updatedAt'])
+        && request.resource.data.status in ['home', 'transit', 'evacuated']
+        && request.resource.data.get('eventId', '') == currentFloodEventId()
+        && request.resource.data.updatedAt == request.time;
+      allow update: if (
+          isSelf(uid)
+          && floodEmergencyActive()
+          && request.resource.data.keys().hasOnly(['status', 'updatedAt', 'eventId'])
+          && request.resource.data.keys().hasAll(['status', 'updatedAt'])
+          && request.resource.data.status in ['home', 'transit', 'evacuated']
+          && request.resource.data.get('eventId', '') == currentFloodEventId()
+          && request.resource.data.updatedAt == request.time
+        ) || (
+          // A flood reset clears the prior report without claiming the resident is home.
+          isAdmin()
+          && request.resource.data.keys().hasOnly(['status', 'updatedAt', 'eventId'])
+          && request.resource.data.keys().hasAll(['status', 'updatedAt', 'eventId'])
+          && request.resource.data.status == 'unreported'
+          && request.resource.data.eventId is string
+          && request.resource.data.eventId == currentFloodEventId()
+          && request.resource.data.updatedAt == request.time
+        );
+      allow delete: if false;
+    }
+
+    match /checkIns/{id} {
+      allow read: if signedIn() && resource.data.responderId == request.auth.uid;
+      allow create: if isVerifiedResponder()
+        && request.resource.data.keys().hasOnly(['responderId', 'household', 'membersPresent', 'allConfirmed', 'createdAt'])
+        && request.resource.data.responderId == request.auth.uid
+        && request.resource.data.household is string
+        && request.resource.data.household.size() >= 1 && request.resource.data.household.size() <= 80
+        && request.resource.data.membersPresent is int
+        && request.resource.data.membersPresent >= 1 && request.resource.data.membersPresent <= 50
+        && request.resource.data.allConfirmed == true
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /responderDeclines/{uid}/items/{requestId} {
+      allow read: if isSelf(uid) && isVerifiedResponder();
+      allow create: if isSelf(uid) && isVerifiedResponder()
+        && request.resource.data.keys().hasOnly(['createdAt'])
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /reports/{id} {
+      allow read: if false;
+      allow create: if isVerifiedResponder()
+        && request.resource.data.keys().hasOnly(['reporterId', 'requestId', 'reason', 'createdAt'])
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.requestId is string
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 200
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // ---------- notifications ----------
+    match /notifications/{uid}/items/{id} {
+      allow read, delete: if isSelf(uid);
+      allow update: if isSelf(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+      // writer and recipient must be the two parties of a real request, and the type must match its status
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['type', 'title', 'body', 'requestId', 'isRead', 'fromUid', 'createdAt'])
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.isRead == false
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.title is string
+        && request.resource.data.title.size() <= 80
+        && (request.resource.data.body == null
+            || (request.resource.data.body is string && request.resource.data.body.size() <= 200))
+        && request.resource.data.requestId is string
+        && request.resource.data.type in ['request_created', 'request_matched', 'request_resolved', 'request_cancelled', 'request_released']
+        && {
+             'request_created': 'pending',
+             'request_matched': 'matched',
+             'request_resolved': 'resolved',
+             'request_cancelled': 'cancelled',
+             'request_released': 'pending'
+           }[request.resource.data.type] == reqAfter(request.resource.data.requestId).status
+        && (request.auth.uid == reqAfter(request.resource.data.requestId).userId
+            || request.auth.uid == reqAfter(request.resource.data.requestId).responderId
+            || (request.resource.data.type == 'request_released'
+                && request.auth.uid == reqNow(request.resource.data.requestId).responderId))
+        && (uid == reqAfter(request.resource.data.requestId).userId
+            || uid == reqAfter(request.resource.data.requestId).responderId);
+    }
+
+    // ---------- error log (read on the Admin screen) ----------
+    // Any signed-in user can save an error; only the admin can read or delete them.
+    match /errorLogs/{id} {
+      allow read, delete: if isAdmin();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['uid', 'source', 'message', 'stack', 'createdAt'])
+        && request.resource.data.keys().hasAll(['uid', 'message', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.message is string
+        && request.resource.data.message.size() <= 500
+        && (request.resource.data.get('source', null) == null
+            || (request.resource.data.source is string && request.resource.data.source.size() <= 80))
+        && (request.resource.data.get('stack', null) == null
+            || (request.resource.data.stack is string && request.resource.data.stack.size() <= 2000))
+        && request.resource.data.createdAt == request.time;
+      allow update: if false;
+    }
+
+    // ---------- content and app-wide emergency advisory ----------
+    match /updates/{id} {
+      allow read: if signedIn();
+      // Only the app's admin can publish a tightly shaped community post.
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly(['title', 'body', 'createdAt'])
+        && request.resource.data.keys().hasAll(['title', 'body', 'createdAt'])
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 80
+        && request.resource.data.body is string
+        && request.resource.data.body.size() >= 1
+        && request.resource.data.body.size() <= 500
+        && request.resource.data.createdAt == request.time;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+    match /evacuationCenters/{id} { allow read: if signedIn(); allow write: if false; }
+    match /config/floodEmergency {
+      allow read: if signedIn();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly([
+          'active', 'title', 'message', 'eventId', 'startedAt', 'updatedAt',
+          'startedBy', 'resetCount', 'resetComplete'
+        ])
+        && request.resource.data.keys().hasAll([
+          'active', 'title', 'message', 'eventId', 'startedAt', 'updatedAt',
+          'startedBy', 'resetCount', 'resetComplete'
+        ])
+        && request.resource.data.active is bool
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 80
+        && request.resource.data.message is string
+        && request.resource.data.message.size() >= 1
+        && request.resource.data.message.size() <= 500
+        && request.resource.data.eventId is string
+        && request.resource.data.startedAt is timestamp
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.startedBy == request.auth.uid
+        && request.resource.data.resetCount is int
+        && request.resource.data.resetCount >= 0
+        && request.resource.data.resetComplete is bool;
+      allow delete: if false;
+    }
+    match /config/{id}            { allow read: if signedIn(); allow write: if false; }
+  }
+}

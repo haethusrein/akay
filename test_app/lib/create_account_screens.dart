@@ -2,15 +2,12 @@
 // AKAY - Create account flow
 // ============================================================
 import 'dart:math' show min;
-
 import 'akay_backend.dart';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
-import 'sign_in_screen.dart';
+import 'screens/sign_in_screen.dart';
+import 'screens/responder_list_screen.dart';
 import 'main.dart';
-import 'main_shell.dart';
 
 // ---------- Extra colors used only by these screens ----------
 const kAmber = Color(0xFFF4C152);
@@ -143,7 +140,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
 
   String? _validatePassword(String? value) {
     if (value == null || value.isEmpty) return 'Enter your password';
-    if (value.length < 6) return 'Use at least 6 characters';
+    if (value.length < 8) return 'Use at least 8 characters';
     return null;
   }
 
@@ -474,8 +471,14 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
     try {
       await AkayBackend.verifyCode(_controller.text);
       if (!mounted) return;
+      final isResponder = await AkayBackend.isRespondent();
+      if (!mounted) return;
       Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const MainShell()),
+        MaterialPageRoute(
+          builder: (_) => isResponder
+              ? const ResponderListScreen()
+              : const HomeScreen(),
+        ),
         (route) => false,
       );
     } catch (e) {
@@ -510,7 +513,7 @@ class _VerifyCodeScreenState extends State<VerifyCodeScreen> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'We sent a 6-digit code to your registered mobile number.',
+            'Enter the 6-digit code you were given.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 14, color: kTextGrey, height: 1.45),
           ),

@@ -42,11 +42,11 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyCXv0pqw4Z-TJjUg5RLWjAwZV73HAxNzn8',
-    appId: '1:1015553101272:ios:2723b03067e4e5b4b436ad',
+    appId: '1:1015553101272:ios:6088362128038a2ab436ad',
     messagingSenderId: '1015553101272',
     projectId: 'akay-69c18',
     storageBucket: 'akay-69c18.firebasestorage.app',
-    iosBundleId: 'com.example.testApp',
+    iosBundleId: 'com.akay.akay',
   );
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyCXv0pqw4Z-TJjUg5RLWjAwZV73HAxNzn8',
@@ -78,7 +78,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyBjJCWJLEmaUI9XiXsstrujlZ8Qk-BlQO0',
-    appId: '1:1015553101272:android:0409621b95bcc80db436ad',
+    appId: '1:1015553101272:android:15d413a23d2a3dd5b436ad',
     messagingSenderId: '1015553101272',
     projectId: 'akay-69c18',
     storageBucket: 'akay-69c18.firebasestorage.app',

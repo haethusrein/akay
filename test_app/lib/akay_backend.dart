@@ -3,6 +3,8 @@
 // The screens only call AkayBackend.something(); no Firebase code in the UI.
 // The security lives in firestore.rules.
 // ============================================================
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
@@ -16,9 +18,19 @@ class AkayBackend {
   static final _db = FirebaseFirestore.instance;
 
   static const double nearbyKm = 5;
+  static const Duration reopenAfter = Duration(minutes: 15);
 
   static String? get uid => _auth.currentUser?.uid;
   static bool get isSignedIn => _auth.currentUser != null;
+
+  /// Returns whether the signed-in account has the responder role.
+  static Future<bool> isRespondent() async {
+    final me = uid;
+    if (me == null) return false;
+    final profile = await _db.doc('users/$me').get();
+    return profile.data()?['role'] == 'respondent' &&
+        profile.data()?['accountStatus'] != 'deleted';
+  }
 
   // ---------- helpers ----------
 
@@ -36,11 +48,12 @@ class AkayBackend {
   // Firebase has no free phone+password login, so we sign in with a hidden email.
   static String _emailFor(String mobile) => '${_digits(mobile)}@akay.app';
 
-  static int _millis(dynamic ts) => (ts is Timestamp
-      ? ts.millisecondsSinceEpoch
-      : DateTime.now().millisecondsSinceEpoch);
+  static int _millis(dynamic ts) =>
+      ts is Timestamp ? ts.millisecondsSinceEpoch : 0;
 
   static double _round3(double n) => (n * 1000).round() / 1000; // ~110 m
+
+  static double _round2(double n) => (n * 100).round() / 100; // ~1 km
 
   static CollectionReference<Map<String, dynamic>> _notifsOf(String userId) =>
       _db.collection('notifications').doc(userId).collection('items');
@@ -62,20 +75,31 @@ class AkayBackend {
 
   /// Turns any error into a message you can show in a SnackBar.
   static String friendlyError(Object e) {
+    // Every error that is shown to a user is also saved for the admin (Error log tab).
+    // Plain text messages are expected ("You already have an active request."), so they are skipped.
+    if (e is! String &&
+        !(e is FirebaseException &&
+            (e.code == 'unavailable' || e.code == 'network-request-failed'))) {
+      logError(e, null, 'shown to user');
+    }
     if (e is FirebaseAuthException) {
       switch (e.code) {
         case 'email-already-in-use':
-          return 'This mobile number already has an account.';
+          return 'We could not create this account. Check your details, or sign in if you already registered.';
         case 'invalid-credential':
         case 'wrong-password':
         case 'user-not-found':
+        case 'invalid-email':
           return 'Wrong mobile number or password.';
         case 'weak-password':
-          return 'Use at least 6 characters.';
+        case 'password-does-not-meet-requirements':
+          return 'Use at least 8 characters.';
+        case 'too-many-requests':
+          return 'Too many attempts. Try again later.';
         case 'network-request-failed':
           return 'No internet connection.';
         default:
-          return e.message ?? 'Sign-in error.';
+          return 'Something went wrong. Please try again.';
       }
     }
     if (e is FirebaseException) {
@@ -100,22 +124,85 @@ class AkayBackend {
       email: _emailFor(mobile),
       password: password,
     );
-    await _db.doc('users/${cred.user!.uid}').set({
-      'mobile': '+${_digits(mobile)}',
-      'role': role.name, // 'resident' | 'respondent'
-      'verified': false,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+    try {
+      await _db.doc('users/${cred.user!.uid}').set({
+        'mobile': '+${_digits(mobile)}',
+        'role': role.name, // 'resident' | 'respondent'
+        'verified': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {
+      await cred.user?.delete().catchError((_) {});
+      rethrow;
+    }
   }
 
   /// "I already have an account"
   static Future<void> signIn({
     required String mobile,
     required String password,
-  }) => _auth.signInWithEmailAndPassword(
-    email: _emailFor(mobile),
-    password: password,
-  );
+  }) async {
+    final credential = await _auth.signInWithEmailAndPassword(
+      email: _emailFor(mobile),
+      password: password,
+    );
+    final user = credential.user;
+    if (user == null) throw 'Wrong mobile number or password.';
+
+    try {
+      final profile = await _db.doc('users/${user.uid}').get();
+      if (!profile.exists || profile.data()?['accountStatus'] == 'deleted') {
+        await _auth.signOut();
+        throw 'This account has been marked as deleted and cannot sign in.';
+      }
+    } catch (_) {
+      // If the account is deleted, sign out above and preserve that message.
+      if (_auth.currentUser == null) rethrow;
+      // A network or Firestore error must not leave the user signed in without
+      // checking the deletion flag.
+      await _auth.signOut();
+      rethrow;
+    }
+  }
+
+  /// Soft-deletes the account profile and signs out. Firebase Auth retains the
+  /// account record; subsequent app sign-in is rejected by [signIn].
+  static Future<void> deactivateAccount() async {
+    final me = uid;
+    if (me == null) throw 'Sign in before deleting this account.';
+    await _db.doc('users/$me').update({
+      'accountStatus': 'deleted',
+      'deletedAt': FieldValue.serverTimestamp(),
+    });
+    await _auth.signOut();
+  }
+
+  /// Phone number of the responder assigned to this user's active request.
+    /// Phone number of the responder assigned to this user's active request.
+  static Future<String?> assignedResponderPhone() async {
+    final me = uid;
+    if (me == null) return null;
+
+    // Read only this user's matched requests. The rules allow request owners
+    // to read their own request documents; activeRequests is intentionally
+    // unreadable by clients.
+    final matchedRequests = await _db
+        .collection('requests')
+        .where('userId', isEqualTo: me)
+        .where('status', isEqualTo: 'matched')
+        .limit(1)
+        .get();
+
+    if (matchedRequests.docs.isEmpty) return null;
+
+    final phone =
+        matchedRequests.docs.first.data()['responderMobile']?.toString().trim();
+
+    return phone == null || phone.isEmpty ? null : phone;
+  }
+
+  /// Safe demo fallback. This is the admin number supplied for the demo.
+  static Future<String> demoAdminPhone() async => '09671670872';
 
   static Future<void> signOut() => _auth.signOut();
 
@@ -128,37 +215,131 @@ class AkayBackend {
     required double lng,
     required int members,
     required String mobilityNeed,
-    List<String> notes = const [],
-  }) => _db.doc('households/$uid').set({
-    'name': name,
-    'barangay': barangay,
-    'address': address,
-    'location': GeoPoint(lat, lng),
-    'members': members,
-    'mobilityNeed': mobilityNeed,
-    'notes': notes,
-    'updatedAt': FieldValue.serverTimestamp(),
-  }, SetOptions(merge: true));
+    List<String>? notes,
+  }) async {
+    final ref = _db.doc('households/$uid');
+    final existing = await ref.get();
+    await ref.set({
+      'name': name,
+      'barangay': barangay,
+      'address': address,
+      'location': GeoPoint(lat, lng),
+      'members': members,
+      'mobilityNeed': mobilityNeed,
+      if (notes != null || !existing.exists) 'notes': notes ?? <String>[],
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  /// Updates editable household details without changing its barangay,
+  /// pinned home location, or private account mobile number.
+  static Future<void> updateHouseholdProfile({
+    required String name,
+    required String address,
+    required int members,
+    required String mobilityNeed,
+  }) async {
+    final me = uid;
+    if (me == null) throw 'Sign in before editing your household.';
+
+    final cleanName = name.trim();
+    final cleanAddress = address.trim();
+    const allowedNeeds = {
+      'None',
+      'Wheelchair required',
+      'Bedridden',
+      'Oxygen tank',
+      'Needs carrying / stretcher',
+      'Infant or young child',
+      'Other',
+    };
+    if (cleanName.isEmpty || cleanName.length > 80) {
+      throw 'Household name must be between 1 and 80 characters.';
+    }
+    if (cleanAddress.isEmpty || cleanAddress.length > 200) {
+      throw 'Address must be between 1 and 200 characters.';
+    }
+    if (members < 1 || members > 50) {
+      throw 'Household size must be between 1 and 50.';
+    }
+    if (!allowedNeeds.contains(mobilityNeed)) {
+      throw 'Choose a valid mobility or equipment need.';
+    }
+
+    await _db.doc('households/$me').update({
+      'name': cleanName,
+      'address': cleanAddress,
+      'members': members,
+      'mobilityNeed': mobilityNeed,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Finds the nearest configured evacuation center to the resident's
+  /// registered household location. This uses the existing signed-in read
+  /// permission for `evacuationCenters`; it adds no Firestore rules.
+  static Future<Map<String, dynamic>?> nearestEvacuationCenter() async {
+    final me = uid;
+    if (me == null) return null;
+
+    final household = await _db.doc('households/$me').get();
+    final origin = household.data()?['location'];
+    final centers = await _db.collection('evacuationCenters').get();
+
+    Map<String, dynamic>? nearest;
+    double? nearestMeters;
+    for (final center in centers.docs) {
+      final data = center.data();
+      final point = data['location'];
+      if (point is! GeoPoint) continue;
+
+      final distanceMeters = origin is GeoPoint
+          ? Geolocator.distanceBetween(
+              origin.latitude,
+              origin.longitude,
+              point.latitude,
+              point.longitude,
+            )
+          : 0.0;
+      if (nearest == null || distanceMeters < nearestMeters!) {
+        nearestMeters = distanceMeters;
+        nearest = {
+          'id': center.id,
+          'name': (data['name'] ?? 'Evacuation center').toString(),
+          'latitude': point.latitude,
+          'longitude': point.longitude,
+          if (origin is GeoPoint)
+            'distanceKm': (distanceMeters / 1000 * 10).round() / 10,
+        };
+        if (origin is! GeoPoint) break;
+      }
+    }
+    return nearest;
+  }
 
   /// Verify Code screen -> Verify.
-  /// You create the codes by hand in Firestore: verificationCodes/123456 { role: 'resident', used: false }
-  static Future<void> verifyCode(String code) async {
-    final codeRef = _db.doc('verificationCodes/$code');
-    final userRef = _db.doc('users/$uid');
-    final snap = await codeRef.get();
-    final data = snap.data();
-    if (!snap.exists || data == null || data['used'] == true) {
-      throw 'Invalid or already used code.';
-    }
-    final me = await userRef.get();
-    if (data['role'] != me.data()?['role']) {
-      throw 'This code is for a different account type.';
-    }
-
+  /// Codes are created by hand in the console:
+  /// verificationCodes/<6-digit code> { role, used: false, expiresAt }
+  static Future<void> verifyCode(String raw) async {
+    final code = raw.replaceAll(RegExp(r'\D'), '');
+    if (code.length != 6) throw 'Invalid or already used code.';
     final batch = _db.batch();
-    batch.update(codeRef, {'used': true, 'usedBy': uid});
-    batch.update(userRef, {'verified': true, 'verifiedWith': code});
-    await batch.commit();
+    batch.update(_db.doc('verificationCodes/$code'), {
+      'used': true,
+      'usedBy': uid,
+    });
+    batch.update(_db.doc('users/$uid'), {
+      'verified': true,
+      'verifiedWith': code,
+    });
+    try {
+      await batch.commit();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied' || e.code == 'not-found') {
+        throw 'Invalid or already used code.';
+      }
+      rethrow;
+    }
   }
 
   /// Role / verified badge ("Verified" on the Home household card)
@@ -212,14 +393,19 @@ class AkayBackend {
     batch.set(ref, {
       'userId': me,
       'type': type,
-      'description': description,
-      'address': h['address'],
       'barangay': h['barangay'],
-      'location': GeoPoint(pos.latitude, pos.longitude),
+      'location': GeoPoint(_round3(pos.latitude), _round3(pos.longitude)),
       'status': 'pending',
       'responderId': null,
       'responderMobile': null,
-      // snapshot so responders see the "Important responder notes"
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    batch.set(_db.doc('requestDetails/${ref.id}'), {
+      'userId': me,
+      'address': h['address'],
+      'location': GeoPoint(pos.latitude, pos.longitude),
+      'description': description,
       'household': {
         'name': h['name'],
         'members': h['members'],
@@ -227,16 +413,18 @@ class AkayBackend {
         'notes': h['notes'] ?? [],
       },
       'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
     });
     batch.set(_db.doc('publicMarkers/${ref.id}'), {
-      'ownerId': me,
       'type': type,
       'status': 'pending',
-      'lat': _round3(pos.latitude),
-      'lng': _round3(pos.longitude),
+      'lat': _round2(pos.latitude),
+      'lng': _round2(pos.longitude),
       'createdAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(
+        DateTime.now().add(const Duration(hours: 24)),
+      ),
     });
+    batch.set(_db.doc('activeRequests/$me'), {'requestId': ref.id});
     batch.set(
       _notifsOf(me).doc(),
       _notif(
@@ -256,6 +444,10 @@ class AkayBackend {
     final r = (await ref.get()).data();
     if (r == null) throw 'Request not found.';
     final batch = _db.batch();
+    batch.delete(_db.doc('activeRequests/${r['userId']}'));
+    if (r['responderId'] != null) {
+      batch.delete(_db.doc('responderActive/${r['responderId']}'));
+    }
     batch.update(ref, {
       'status': 'cancelled',
       'updatedAt': FieldValue.serverTimestamp(),
@@ -275,6 +467,7 @@ class AkayBackend {
   }
 
   /// Verified responder accepts. If two try at once, the second fails (rules only allow pending -> matched).
+  /// A responder can hold one active job at a time.
   static Future<void> acceptRequest(String id) async {
     final ref = _db.doc('requests/$id');
     final r = (await ref.get()).data();
@@ -291,6 +484,7 @@ class AkayBackend {
       'matchedAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
+    batch.set(_db.doc('responderActive/$uid'), {'requestId': id});
     batch.delete(_db.doc('publicMarkers/$id'));
     batch.set(
       _notifsOf(r['userId']).doc(),
@@ -301,7 +495,14 @@ class AkayBackend {
         requestId: id,
       ),
     );
-    await batch.commit();
+    try {
+      await batch.commit();
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        throw 'Could not accept. It may already be taken, or you already have an active job.';
+      }
+      rethrow;
+    }
   }
 
   /// Requester or the assigned responder marks it resolved.
@@ -311,6 +512,10 @@ class AkayBackend {
     if (r == null) throw 'Request not found.';
     final other = (r['userId'] == uid) ? r['responderId'] : r['userId'];
     final batch = _db.batch();
+    batch.delete(_db.doc('activeRequests/${r['userId']}'));
+    if (r['responderId'] != null) {
+      batch.delete(_db.doc('responderActive/${r['responderId']}'));
+    }
     batch.update(ref, {
       'status': 'resolved',
       'resolvedAt': FieldValue.serverTimestamp(),
@@ -329,10 +534,89 @@ class AkayBackend {
     await batch.commit();
   }
 
+  /// Assigned responder hands the request back so another responder can take it.
+  static Future<void> releaseRequest(String id) async {
+    final ref = _db.doc('requests/$id');
+    final r = (await ref.get()).data();
+    if (r == null || r['responderId'] != uid || r['status'] != 'matched') {
+      throw 'This request is not assigned to you.';
+    }
+    final loc = r['location'] as GeoPoint;
+    final batch = _db.batch();
+    batch.update(ref, {
+      'status': 'pending',
+      'responderId': null,
+      'responderMobile': null,
+      'matchedAt': null,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    batch.delete(_db.doc('responderActive/$uid'));
+    batch.set(_db.doc('publicMarkers/$id'), {
+      'type': r['type'],
+      'status': 'pending',
+      'lat': _round2(loc.latitude),
+      'lng': _round2(loc.longitude),
+      'createdAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(
+        DateTime.now().add(const Duration(hours: 24)),
+      ),
+    });
+    batch.set(
+      _notifsOf(r['userId']).doc(),
+      _notif(
+        'request_released',
+        'Your responder had to step away',
+        body: 'Finding another verified responder near you.',
+        requestId: id,
+      ),
+    );
+    await batch.commit();
+  }
+
+  /// Requester re-opens a request whose responder has not resolved it after [reopenAfter].
+  static Future<void> reopenRequest(String id) async {
+    final ref = _db.doc('requests/$id');
+    final r = (await ref.get()).data();
+    if (r == null || r['userId'] != uid || r['status'] != 'matched') {
+      throw 'This request cannot be re-opened.';
+    }
+    final matchedAt = r['matchedAt'];
+    if (matchedAt is! Timestamp ||
+        DateTime.now().difference(matchedAt.toDate()) < reopenAfter) {
+      throw 'You can re-open this request 15 minutes after a responder accepts it.';
+    }
+    final loc = r['location'] as GeoPoint;
+    final batch = _db.batch();
+    batch.update(ref, {
+      'status': 'pending',
+      'responderId': null,
+      'responderMobile': null,
+      'matchedAt': null,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+    batch.delete(_db.doc('responderActive/${r['responderId']}'));
+    batch.set(_db.doc('publicMarkers/$id'), {
+      'type': r['type'],
+      'status': 'pending',
+      'lat': _round2(loc.latitude),
+      'lng': _round2(loc.longitude),
+      'createdAt': FieldValue.serverTimestamp(),
+      'expiresAt': Timestamp.fromDate(
+        DateTime.now().add(const Duration(hours: 24)),
+      ),
+    });
+    await batch.commit();
+  }
+
   /// Request status screen (live: pending -> matched -> resolved)
   static Stream<DocumentSnapshot<Map<String, dynamic>>> watchRequest(
     String id,
   ) => _db.doc('requests/$id').snapshots();
+
+  /// Exact location, address, description and household of a request.
+  static Stream<DocumentSnapshot<Map<String, dynamic>>> watchRequestDetails(
+    String id,
+  ) => _db.doc('requestDetails/$id').snapshots();
 
   static List<Map<String, dynamic>> _sorted(
     QuerySnapshot<Map<String, dynamic>> s,
@@ -353,7 +637,7 @@ class AkayBackend {
 
   // ---------- responder side ----------
 
-  /// Responder: go online/offline (shares your position for the "Responders online" count).
+  /// Responder: go online/offline (shares a coarse ~1 km position for the "Responders online" count).
   static Future<void> setOnline(bool online) async {
     final data = <String, dynamic>{
       'online': online,
@@ -361,18 +645,102 @@ class AkayBackend {
     };
     if (online) {
       final p = await currentPosition();
-      data['lat'] = p.latitude;
-      data['lng'] = p.longitude;
+      data['lat'] = _round2(p.latitude);
+      data['lng'] = _round2(p.longitude);
     }
     await _db.doc('presence/$uid').set(data, SetOptions(merge: true));
   }
 
   /// Responder: live list of requests waiting for help (newest first). Each item has an 'id'.
+  /// Requests this responder declined are hidden.
   static Stream<List<Map<String, dynamic>>> pendingRequests() => _db
       .collection('requests')
       .where('status', isEqualTo: 'pending')
       .snapshots()
-      .map(_sorted);
+      .asyncMap((snap) async {
+        final declined = await _declinedIds();
+        return _sorted(snap).where((r) => !declined.contains(r['id'])).toList();
+      });
+
+  static Future<Set<String>> _declinedIds() async {
+    try {
+      final s = await _db.collection('responderDeclines/$uid/items').get();
+      return s.docs.map((d) => d.id).toSet();
+    } catch (_) {
+      return {}; // offline or not allowed: just show everything
+    }
+  }
+
+  /// Responder: "Decline - show next responder". Hides this request from MY list only.
+  static Future<void> declineRequest(String requestId) => _db
+      .doc('responderDeclines/$uid/items/$requestId')
+      .set({'createdAt': FieldValue.serverTimestamp()});
+
+  /// Responder: "Report suspicious ping". Admins read the `reports` collection in the console.
+  static Future<void> reportRequest(String requestId, {String? reason}) =>
+      _db.collection('reports').add({
+        'reporterId': uid,
+        'requestId': requestId,
+        'reason': (reason ?? 'Suspicious ping').trim(),
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+  /// Responder: evacuation-center check-in (wireframe 12).
+  /// Works offline: Firestore keeps the write on the phone and sends it when online.
+  /// We do NOT await it for that reason; use [hasPendingWrites] to show "Waiting to sync".
+  static Future<void> checkInHousehold({
+    required String household,
+    required int membersPresent,
+  }) {
+    final write = _db.collection('checkIns').add({
+      'responderId': uid,
+      'household': household.trim(),
+      'membersPresent': membersPresent,
+      'allConfirmed': true,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+    return write;
+  }
+
+  // ---------- resident: evacuation status (wireframe 08) ----------
+
+  /// 'home' | 'transit' | 'evacuated'. Residents may update only during an
+  /// active admin flood emergency. The event id prevents stale writes from
+  /// crossing emergency boundaries.
+  static Future<void> setEvacuationStatus(String status) async {
+    final me = uid;
+    if (me == null) throw 'Sign in before updating evacuation status.';
+    if (!const {'home', 'transit', 'evacuated'}.contains(status)) {
+      throw 'Choose a valid evacuation status.';
+    }
+
+    final emergency = await _db.doc('config/floodEmergency').get(
+      const GetOptions(source: Source.server),
+    );
+    final emergencyData = emergency.data();
+    final eventId = emergencyData?['eventId']?.toString() ?? '';
+    if (!emergency.exists ||
+        emergencyData?['active'] != true ||
+        emergencyData?['resetComplete'] != true ||
+        eventId.isEmpty) {
+      throw 'Evacuation status can only be updated during an active admin flood emergency.';
+    }
+
+    await _db.doc('evacuationStatus/$me').set({
+      'status': status,
+      'eventId': eventId,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  static Stream<DocumentSnapshot<Map<String, dynamic>>> myEvacuationStatus() =>
+      _db.doc('evacuationStatus/$uid').snapshots();
+
+  /// True while a write is still only on this phone (drives "Waiting to sync").
+  static Stream<bool> hasPendingWrites() => _db
+      .doc('evacuationStatus/$uid')
+      .snapshots(includeMetadataChanges: true)
+      .map((s) => s.metadata.hasPendingWrites);
 
   /// Responder: requests I accepted.
   static Stream<List<Map<String, dynamic>>> myAcceptedRequests() => _db
@@ -386,6 +754,34 @@ class AkayBackend {
   static Stream<DocumentSnapshot<Map<String, dynamic>>> myHousehold() =>
       _db.doc('households/$uid').snapshots();
 
+  /// Private emergency details for the signed-in user. These are never copied
+  /// into a responder request automatically.
+  static Stream<DocumentSnapshot<Map<String, dynamic>>> myEmergencyProfile() =>
+      _db.doc('emergencyProfiles/$uid').snapshots();
+
+  static Future<void> saveEmergencyProfile({
+    required String conditions,
+    required String medications,
+    required String allergies,
+    required String contactName,
+    required String contactPhone,
+    required String instructions,
+  }) async {
+    final me = uid;
+    if (me == null) {
+      throw 'Sign in before saving emergency details.';
+    }
+    await _db.doc('emergencyProfiles/$me').set({
+      'conditions': conditions.trim(),
+      'medications': medications.trim(),
+      'allergies': allergies.trim(),
+      'contactName': contactName.trim(),
+      'contactPhone': contactPhone.trim(),
+      'instructions': instructions.trim(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
   /// "Community updates" (you post these by hand in the console: collection `updates`).
   static Stream<QuerySnapshot<Map<String, dynamic>>> communityUpdates() => _db
       .collection('updates')
@@ -398,33 +794,63 @@ class AkayBackend {
     double lat,
     double lng,
   ) async {
-    double km(num a, num b) =>
-        Geolocator.distanceBetween(lat, lng, a.toDouble(), b.toDouble()) / 1000;
+    double km(double a, double b) =>
+        Geolocator.distanceBetween(lat, lng, a, b) / 1000;
+
+    double? asNum(dynamic v) => v is num ? v.toDouble() : null;
+
+    // Presence is readable by verified users only; unverified users see 0.
+    Future<QuerySnapshot<Map<String, dynamic>>?> presenceGet() async {
+      try {
+        return await _db
+            .collection('presence')
+            .where('online', isEqualTo: true)
+            .get();
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied') return null;
+        rethrow;
+      }
+    }
 
     final results = await Future.wait([
-      _db.collection('presence').where('online', isEqualTo: true).get(),
+      presenceGet(),
       _db.collection('publicMarkers').get(),
       _db.collection('evacuationCenters').get(),
     ]);
 
+    final presenceSnap = results[0];
+    final markerSnap = results[1]!;
+    final centerSnap = results[2]!;
+
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
     final cutoff = DateTime.now()
         .subtract(const Duration(minutes: 30))
         .millisecondsSinceEpoch;
-    final online = results[0].docs.where((d) {
+    var online = 0;
+    for (final d in presenceSnap?.docs ?? const []) {
       final x = d.data();
-      return x['lat'] != null &&
-          km(x['lat'], x['lng']) <= nearbyKm &&
-          _millis(x['updatedAt']) >= cutoff;
-    }).length;
-    final active = results[1].docs.where((d) {
+      final pLat = asNum(x['lat']);
+      final pLng = asNum(x['lng']);
+      if (pLat == null || pLng == null) continue;
+      if (km(pLat, pLng) <= nearbyKm && _millis(x['updatedAt']) >= cutoff) {
+        online++;
+      }
+    }
+    var active = 0;
+    for (final d in markerSnap.docs) {
       final x = d.data();
-      return x['lat'] != null && km(x['lat'], x['lng']) <= nearbyKm;
-    }).length;
+      final mLat = asNum(x['lat']);
+      final mLng = asNum(x['lng']);
+      if (mLat == null || mLng == null) continue;
+      final exp = x['expiresAt'];
+      if (exp is Timestamp && exp.millisecondsSinceEpoch < nowMs) continue;
+      if (km(mLat, mLng) <= nearbyKm) active++;
+    }
 
     Map<String, dynamic>? nearest;
-    for (final c in results[2].docs) {
-      final loc = c.data()['location'] as GeoPoint?;
-      if (loc == null) continue;
+    for (final c in centerSnap.docs) {
+      final loc = c.data()['location'];
+      if (loc is! GeoPoint) continue;
       final d = km(loc.latitude, loc.longitude);
       if (nearest == null || d < (nearest['distanceKm'] as double)) {
         nearest = {
@@ -448,32 +874,316 @@ class AkayBackend {
   // ---------- notifications (live inside the app) ----------
 
   /// Notifications screen list
-  static Stream<QuerySnapshot<Map<String, dynamic>>> notifications() =>
-      _notifsOf(uid!)
-          .orderBy('createdAt', descending: true)
-          .limit(50)
-          .snapshots();
+  static Stream<QuerySnapshot<Map<String, dynamic>>> notifications() {
+    final me = uid;
+    if (me == null) return const Stream.empty();
+    return _notifsOf(me)
+        .orderBy('createdAt', descending: true)
+        .limit(50)
+        .snapshots();
+  }
 
   /// Bell badge number
-  static Stream<int> unreadCount() =>
-      _notifsOf(uid!)
-          .where('isRead', isEqualTo: false)
-          .snapshots()
-          .map((s) => s.size);
+  static Stream<int> unreadCount() {
+    final me = uid;
+    if (me == null) return Stream.value(0);
+    return _notifsOf(me)
+        .where('isRead', isEqualTo: false)
+        .snapshots()
+        .map((s) => s.size);
+  }
 
-  static Future<void> markRead(String id) =>
-      _notifsOf(uid!).doc(id).update({'isRead': true});
-  static Future<void> deleteNotification(String id) =>
-      _notifsOf(uid!).doc(id).delete();
+  static Future<void> markRead(String id) async {
+    final me = uid;
+    if (me == null) return;
+    await _notifsOf(me).doc(id).update({'isRead': true});
+  }
+
+  static Future<void> deleteNotification(String id) async {
+    final me = uid;
+    if (me == null) return;
+    await _notifsOf(me).doc(id).delete();
+  }
 
   static Future<void> markAllRead() async {
-    final snap = await _notifsOf(uid!)
+    final me = uid;
+    if (me == null) return;
+    final snap = await _notifsOf(me)
         .where('isRead', isEqualTo: false)
         .limit(400)
         .get();
     final batch = _db.batch();
     for (final d in snap.docs) {
       batch.update(d.reference, {'isRead': true});
+    }
+    await batch.commit();
+  }
+
+  // ============================================================
+  // ADMIN (demonstration and testing only)
+  // The admin account (admin, 00000000) is created by hand in the Firebase console.
+  // firestore.rules -> isAdmin() checks the same mobile value, so these calls fail for everyone else.
+  // ============================================================
+
+  static const String adminMobile = '00000000';
+
+  /// How long a normal pin works, and how long a demo pin works.
+  static const Duration pinLifetime = Duration(minutes: 30);
+  static const Duration demoPinLifetime = Duration(hours: 24);
+
+  static bool isAdminProfile(Map<String, dynamic>? profile) =>
+      profile != null && profile['mobile'] == adminMobile;
+
+  // ---------- admin: accounts ----------
+
+  /// Every account (newest first). Each item has 'id' (the uid), mobile, role, verified, createdAt.
+  static Stream<List<Map<String, dynamic>>> adminUsers() =>
+      _db.collection('users').snapshots().map(_sorted);
+
+  /// Evacuation status records for the admin dashboard. Only admins may read these.
+  static Stream<List<Map<String, dynamic>>> adminEvacuationStatuses() =>
+      _db.collection('evacuationStatus').snapshots().map((snapshot) {
+        final items = snapshot.docs
+            .map((doc) => <String, dynamic>{'id': doc.id, ...doc.data()})
+            .toList();
+        items.sort(
+          (a, b) => _millis(b['updatedAt']).compareTo(_millis(a['updatedAt'])),
+        );
+        return items;
+      });
+
+  /// All request records for the admin's responder assignment report.
+  static Stream<List<Map<String, dynamic>>> adminRequests() =>
+      _db.collection('requests').snapshots().map(_sorted);
+
+  /// Current app-wide flood advisory. It is read by signed-in app users.
+  static Stream<Map<String, dynamic>?> floodEmergency() => _db
+      .doc('config/floodEmergency')
+      .snapshots()
+      .map((snapshot) => snapshot.data());
+
+  /// Starts an in-app flood advisory and resets all existing evacuation records.
+  /// The reset is done by the admin client in batches to stay on Firebase Spark
+  /// (no Cloud Function required). Statuses become 'unreported', not 'home'.
+  static Future<int> adminStartFloodEmergency({
+    required String title,
+    required String message,
+  }) async {
+    final adminUid = uid;
+    if (adminUid == null) throw 'Sign in as the admin first.';
+
+    final cleanTitle = title.trim();
+    final cleanMessage = message.trim();
+    if (cleanTitle.isEmpty || cleanTitle.length > 80) {
+      throw 'The advisory title must be between 1 and 80 characters.';
+    }
+    if (cleanMessage.isEmpty || cleanMessage.length > 500) {
+      throw 'The advisory message must be between 1 and 500 characters.';
+    }
+
+    final eventId = _db.collection('_floodEvents').doc().id;
+    final emergencyRef = _db.doc('config/floodEmergency');
+    await emergencyRef.set({
+      'active': false,
+      'title': cleanTitle,
+      'message': cleanMessage,
+      'eventId': eventId,
+      'startedAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'startedBy': adminUid,
+      'resetCount': 0,
+      'resetComplete': false,
+    });
+    final snapshot = await _db.collection('evacuationStatus').get();
+    var resetCount = 0;
+    for (var start = 0; start < snapshot.docs.length; start += 450) {
+      final batch = _db.batch();
+      final end = (start + 450 < snapshot.docs.length)
+          ? start + 450
+          : snapshot.docs.length;
+      for (final doc in snapshot.docs.sublist(start, end)) {
+        batch.update(doc.reference, {
+          'status': 'unreported',
+          'eventId': eventId,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+      resetCount += end - start;
+    }
+
+    // Publish only after all status batches succeed, so residents cannot
+    // respond to the advisory while a later batch is still clearing statuses.
+    await emergencyRef.update({
+      'active': true,
+      'updatedAt': FieldValue.serverTimestamp(),
+      'resetCount': resetCount,
+      'resetComplete': true,
+    });
+    return resetCount;
+  }
+
+  static Future<void> adminEndFloodEmergency() async {
+    await _db.doc('config/floodEmergency').update({
+      'active': false,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  // ---------- admin: one-time pins ----------
+
+  /// Every pin (newest first). Each item has 'id' (the 6 digits), role, used, expiresAt, demo,
+  /// and forUid / forMobile when it was made for one account.
+  static Stream<List<Map<String, dynamic>>> adminPins() =>
+      _db.collection('verificationCodes').snapshots().map(_sorted);
+
+  /// Creates a one-time pin: verificationCodes/pin { role, used: false, expiresAt, ... }.
+  /// The same document is what [verifyCode] redeems.
+  /// [demo] makes a long-lived "special" pin, and [customPin] lets you choose its 6 digits.
+  static Future<String> adminCreatePin({
+    required String role,
+    String? forUid,
+    String? forMobile,
+    bool demo = false,
+    String? customPin,
+  }) async {
+    final me = uid;
+    if (me == null) throw 'Sign in first.';
+    if (role != 'resident' && role != 'respondent') {
+      throw 'Pins can only be made for residents or responders.';
+    }
+    final custom = (customPin ?? '').replaceAll(RegExp(r'\D'), '');
+    final wantsCustom = custom.isNotEmpty;
+    if (wantsCustom && custom.length != 6) {
+      throw 'A pin must be exactly 6 digits.';
+    }
+
+    final life = demo ? demoPinLifetime : pinLifetime;
+    for (var attempt = 0; attempt < 8; attempt++) {
+      final pin = wantsCustom
+          ? custom
+          : (Random.secure().nextInt(900000) + 100000).toString();
+      final ref = _db.doc('verificationCodes/$pin');
+      try {
+        if ((await ref.get()).exists) {
+          if (wantsCustom) throw 'That pin already exists. Choose another one.';
+          continue; // random pin collided with an existing one: try another
+        }
+        await ref.set({
+          'role': role,
+          'used': false,
+          'expiresAt': Timestamp.fromDate(DateTime.now().add(life)),
+          'createdAt': FieldValue.serverTimestamp(),
+          'createdBy': me,
+          'demo': demo,
+          'forUid': ?forUid,
+          'forMobile': ?forMobile,
+        });
+        return pin;
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied') {
+          throw 'Could not save the pin. Deploy the latest firestore.rules and sign in as the admin.';
+        }
+        rethrow;
+      }
+    }
+    throw 'Could not find a free pin. Try again.';
+  }
+
+  /// Pin for one new account (role and mobile are copied from the account).
+  /// [replacePins] are older unused pins of that account; they are revoked.
+  static Future<String> adminIssuePinForUser(
+    Map<String, dynamic> user, {
+    List<String> replacePins = const [],
+  }) async {
+    final pin = await adminCreatePin(
+      role: (user['role'] ?? '').toString(),
+      forUid: user['id']?.toString(),
+      forMobile: user['mobile']?.toString(),
+    );
+    for (final old in replacePins) {
+      try {
+        await adminRevokePin(old);
+      } catch (_) {
+        // an old pin that cannot be removed will simply expire
+      }
+    }
+    return pin;
+  }
+
+  /// Deletes a pin nobody has used yet.
+  static Future<void> adminRevokePin(String pin) =>
+      _db.doc('verificationCodes/$pin').delete();
+
+  // ---------- admin: error log ----------
+
+  static final Map<String, DateTime> _recentErrors = {};
+
+  static String _clip(String text, int max) =>
+      text.length <= max ? text : text.substring(0, max);
+
+  static Future<void> _writeErrorLog(
+    Object error,
+    StackTrace? stack,
+    String? source,
+  ) async {
+    await _db.collection('errorLogs').add({
+      'uid': uid,
+      'source': source,
+      'message': _clip(error.toString(), 500),
+      'stack': stack == null ? null : _clip(stack.toString(), 2000),
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Saves an exception for the admin (Admin screen -> Error log). Never throws, never waits.
+  /// The same error within one minute is saved only once.
+  static void logError(Object error, [StackTrace? stack, String? source]) {
+    try {
+      if (uid == null) return; // the rules only accept signed-in users
+      final key = '${source ?? ''}|${error.toString()}';
+      final now = DateTime.now();
+      final last = _recentErrors[key];
+      if (last != null && now.difference(last) < const Duration(minutes: 1)) {
+        return;
+      }
+      if (_recentErrors.length > 50) _recentErrors.clear();
+      _recentErrors[key] = now;
+      _writeErrorLog(error, stack, source).catchError((_) {});
+    } catch (_) {
+      // logging must never cause another error
+    }
+  }
+
+  /// "Log Test Exception": throws a real exception, catches it and saves it.
+  /// Unlike [logError] this waits, so the admin sees when saving fails.
+  static Future<void> adminLogTestException() async {
+    try {
+      throw StateError('Test exception from the admin screen');
+    } catch (e, st) {
+      await _writeErrorLog(e, st, 'admin test').timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => throw 'No internet connection. The entry will be saved when you are back online.',
+      );
+    }
+  }
+
+  /// Newest 100 entries. Each item has 'id', uid, source, message, stack, createdAt.
+  static Stream<List<Map<String, dynamic>>> adminErrorLogs() => _db
+      .collection('errorLogs')
+      .orderBy('createdAt', descending: true)
+      .limit(100)
+      .snapshots()
+      .map((s) => s.docs.map((d) => {'id': d.id, ...d.data()}).toList());
+
+  static Future<void> adminDeleteErrorLog(String id) =>
+      _db.doc('errorLogs/$id').delete();
+
+  static Future<void> adminClearErrorLogs(List<String> ids) async {
+    if (ids.isEmpty) return;
+    final batch = _db.batch();
+    for (final id in ids.take(400)) {
+      batch.delete(_db.doc('errorLogs/$id'));
     }
     await batch.commit();
   }

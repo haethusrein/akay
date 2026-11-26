@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>AKAY uses Bluetooth to share and relay emergency requests with nearby phones when there is no internet.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>AKAY uses Bluetooth to share your emergency request with nearby phones.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
